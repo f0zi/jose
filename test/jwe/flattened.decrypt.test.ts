@@ -1,7 +1,7 @@
 import test from 'ava'
 import * as crypto from 'crypto'
 
-import { FlattenedEncrypt, base64url, flattenedDecrypt } from '../../src/index.js'
+import { FlattenedEncrypt, base64url, flattenedDecrypt, generateKeyPair } from '../../src/index.js'
 
 test.before(async (t) => {
   const encode = TextEncoder.prototype.encode.bind(new TextEncoder())
@@ -200,6 +200,88 @@ test('JWE format validation', async (t) => {
   }
 })
 
+test('shared headers are snapshotted before recipient members', async (t) => {
+  const direct = await new FlattenedEncrypt(t.context.plaintext)
+    .setSharedUnprotectedHeader({ alg: 'dir', enc: 'A128GCM' })
+    .encrypt(t.context.secret)
+  const unprotected = { alg: 'A256KW', enc: 'A128GCM' }
+  let encryptedKeyReads = 0
+  const switching = Object.defineProperty({ ...direct, unprotected }, 'encrypted_key', {
+    enumerable: true,
+    get() {
+      encryptedKeyReads++
+      unprotected.alg = 'dir'
+      return undefined
+    },
+  })
+
+  await t.throwsAsync(flattenedDecrypt(switching, t.context.secret))
+  t.is(encryptedKeyReads, 1)
+})
+
+test('recipient snapshots preserve an undefined thrown value', async (t) => {
+  const direct = await new FlattenedEncrypt(t.context.plaintext)
+    .setProtectedHeader({ alg: 'dir', enc: 'A128GCM' })
+    .encrypt(t.context.secret)
+  const throwing = Object.defineProperty({ ...direct }, 'encrypted_key', {
+    enumerable: true,
+    get() {
+      throw undefined
+    },
+  })
+
+  let rejected = false
+  const reason = await flattenedDecrypt(throwing, t.context.secret).catch((error) => {
+    rejected = true
+    return error
+  })
+  t.true(rejected)
+  t.is(reason, undefined)
+})
+
+test('an empty JWE AAD value must be represented by omitting the member', async (t) => {
+  const encode = TextEncoder.prototype.encode.bind(new TextEncoder())
+  const protectedHeader = base64url.encode(JSON.stringify({ alg: 'dir', enc: 'A128GCM' }))
+  const iv = new Uint8Array(12)
+  const key = await crypto.subtle.importKey('raw', t.context.secret, 'AES-GCM', false, ['encrypt'])
+  const encrypted = new Uint8Array(
+    await crypto.subtle.encrypt(
+      {
+        additionalData: encode(`${protectedHeader}.`),
+        iv,
+        name: 'AES-GCM',
+        tagLength: 128,
+      },
+      key,
+      t.context.plaintext,
+    ),
+  )
+
+  const jwe = {
+    aad: '',
+    ciphertext: base64url.encode(encrypted.slice(0, -16)),
+    iv: base64url.encode(iv),
+    protected: protectedHeader,
+    tag: base64url.encode(encrypted.slice(-16)),
+  }
+
+  await t.throwsAsync(flattenedDecrypt(jwe, t.context.secret), { code: 'ERR_JWE_INVALID' })
+
+  let reads = 0
+  const accessor = Object.defineProperty({ ...jwe, aad: undefined }, 'aad', {
+    enumerable: true,
+    get() {
+      reads++
+      return reads === 2 || reads === 3 ? 'eA' : ''
+    },
+  })
+
+  await t.throwsAsync(flattenedDecrypt(accessor, t.context.secret), {
+    code: 'ERR_JWE_INVALID',
+  })
+  t.is(reads, 1)
+})
+
 test('AES CBC + HMAC', async (t) => {
   const secret = crypto.randomFillSync(new Uint8Array(32))
   const jwe = await new FlattenedEncrypt(t.context.plaintext)
@@ -306,5 +388,79 @@ test('a non-ASCII "aad" is a JWEInvalid', async (t) => {
   // A well-formed but wrong "aad" still fails as a decryption failure.
   await t.throwsAsync(flattenedDecrypt({ ...jwe, aad: 'AQID' }, t.context.secret), {
     code: 'ERR_JWE_DECRYPTION_FAILED',
+  })
+})
+
+test('AES-GCM authentication tags must be 128 bits', async (t) => {
+  const jwe = await new FlattenedEncrypt(t.context.plaintext)
+    .setProtectedHeader({ alg: 'dir', enc: 'A128GCM' })
+    .encrypt(t.context.secret)
+  const ciphertext = base64url.decode(jwe.ciphertext)
+  const tag = base64url.decode(jwe.tag!)
+
+  const shifted = [
+    {
+      ciphertext: ciphertext.slice(0, -1),
+      tag: new Uint8Array([...ciphertext.slice(-1), ...tag]),
+    },
+    {
+      ciphertext: new Uint8Array([...ciphertext, tag[0]]),
+      tag: tag.slice(1),
+    },
+    {
+      ciphertext: new Uint8Array([...ciphertext, ...tag]),
+      tag: new Uint8Array(),
+    },
+    {
+      ciphertext: new Uint8Array(),
+      tag: new Uint8Array([...ciphertext, ...tag]),
+    },
+  ]
+
+  // Without checking the member boundary, every case reconstructs the original ciphertext || tag.
+  for (const members of shifted) {
+    await t.throwsAsync(
+      flattenedDecrypt(
+        {
+          ...jwe,
+          ciphertext: base64url.encode(members.ciphertext),
+          tag: base64url.encode(members.tag),
+        },
+        t.context.secret,
+      ),
+      { code: 'ERR_JWE_INVALID' },
+    )
+  }
+})
+
+test('encrypted CEK length errors are indistinguishable from decryption failures', async (t) => {
+  const { publicKey, privateKey } = await generateKeyPair('RSA-OAEP-256')
+  const jwe = await new FlattenedEncrypt(t.context.plaintext)
+    .setProtectedHeader({ alg: 'RSA-OAEP-256', enc: 'A128GCM' })
+    .encrypt(publicKey)
+
+  const wrongLength = new Uint8Array(
+    await crypto.subtle.encrypt('RSA-OAEP', publicKey, new Uint8Array(1)),
+  )
+  const malformed = crypto.randomFillSync(new Uint8Array(256))
+
+  for (const encryptedKey of [wrongLength, malformed]) {
+    await t.throwsAsync(
+      flattenedDecrypt({ ...jwe, encrypted_key: base64url.encode(encryptedKey) }, privateKey),
+      {
+        code: 'ERR_JWE_DECRYPTION_FAILED',
+        message: 'decryption operation failed',
+      },
+    )
+  }
+})
+
+test('an empty protected member is not an encoded protected header', async (t) => {
+  const jwe = await new FlattenedEncrypt(t.context.plaintext)
+    .setSharedUnprotectedHeader({ alg: 'dir', enc: 'A128GCM' })
+    .encrypt(t.context.secret)
+
+  await t.throwsAsync(flattenedDecrypt({ ...jwe, protected: '' }, t.context.secret), {
+    code: 'ERR_JWE_INVALID',
   })
 })

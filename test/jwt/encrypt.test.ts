@@ -157,3 +157,74 @@ test('EncryptJWT.prototype.setInitializationVector', (t) => {
     },
   )
 })
+
+test('EncryptJWT.prototype.encrypt must have a JOSE header', async (t) => {
+  let critReads = 0
+  const options = {
+    get crit() {
+      critReads++
+      throw new Error('unexpected crit option getter')
+    },
+  }
+
+  await t.throwsAsync(new EncryptJWT(t.context.payload).encrypt(t.context.secret, options), {
+    code: 'ERR_JWE_INVALID',
+    message:
+      'either setProtectedHeader, setUnprotectedHeader, or sharedUnprotectedHeader must be called before #encrypt()',
+  })
+  t.is(critReads, 0)
+})
+
+test('EncryptJWT validates NumericDate claims before reading replicated headers', async (t) => {
+  let reads = 0
+  const protectedHeader = {
+    get alg() {
+      reads++
+      return 'dir'
+    },
+    enc: 'A128GCM',
+  }
+
+  await t.throwsAsync(
+    new EncryptJWT({ exp: NaN })
+      .setProtectedHeader(protectedHeader)
+      .replicateIssuerAsHeader()
+      .encrypt(t.context.secret),
+    {
+      instanceOf: TypeError,
+      message: '"exp" claim must be a finite number',
+    },
+  )
+  t.is(reads, 0)
+})
+
+test('EncryptJWT does not ignore invalid falsy encryption parameters', async (t) => {
+  for (const [configure, message] of [
+    [
+      (jwt: EncryptJWT) => jwt.setInitializationVector(0 as never),
+      'JWE Initialization Vector must be an instance of Uint8Array',
+    ],
+    [
+      (jwt: EncryptJWT) => jwt.setContentEncryptionKey(0 as never),
+      'JWE Content Encryption Key must be an instance of Uint8Array',
+    ],
+    [
+      (jwt: EncryptJWT) => jwt.setKeyManagementParameters(null as never),
+      'JWE Key Management Parameters must be an object',
+    ],
+    [
+      (jwt: EncryptJWT) => jwt.setKeyManagementParameters(false as never),
+      'JWE Key Management Parameters must be an object',
+    ],
+  ] as const) {
+    await t.throwsAsync(
+      configure(new EncryptJWT(t.context.payload))
+        .setProtectedHeader({
+          alg: 'dir',
+          enc: 'A128GCM',
+        })
+        .encrypt(t.context.secret),
+      { instanceOf: TypeError, message },
+    )
+  }
+})

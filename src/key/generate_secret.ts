@@ -7,6 +7,7 @@
 import { unsupportedAlg, algArgument } from '../lib/key_algorithm.js'
 
 import type * as types from '../types.d.ts'
+import { validateExtractableOption } from '../lib/key_options.js'
 
 /**
  * JWA Algorithm Identifiers that {@link generateSecret} is able to generate a secret for, subject to
@@ -90,6 +91,7 @@ export async function generateSecret(
   alg: string,
   options?: GenerateSecretOptions,
 ): Promise<types.CryptoKey | Uint8Array> {
+  const extractable = validateExtractableOption(options?.extractable)
   let length: number
   let algorithm: AesKeyGenParams | HmacKeyGenParams
   let keyUsages: KeyUsage[]
@@ -97,19 +99,18 @@ export async function generateSecret(
     case 'HS256':
     case 'HS384':
     case 'HS512':
-      length = parseInt(alg.slice(-3), 10)
+      length = +alg.slice(-3)
       algorithm = { name: 'HMAC', hash: `SHA-${length}`, length }
       keyUsages = ['sign', 'verify']
       break
     case 'A128CBC-HS256':
     case 'A192CBC-HS384':
     case 'A256CBC-HS512':
-      length = parseInt(alg.slice(-3), 10)
-      return crypto.getRandomValues(new Uint8Array(length >> 3))
+      return crypto.getRandomValues(new Uint8Array(+alg.slice(-3) >> 3))
     case 'A128KW':
     case 'A192KW':
     case 'A256KW':
-      length = parseInt(alg.slice(1, 4), 10)
+      length = +alg.slice(1, 4)
       algorithm = { name: 'AES-KW', length }
       keyUsages = ['wrapKey', 'unwrapKey']
       break
@@ -119,7 +120,7 @@ export async function generateSecret(
     case 'A128GCM':
     case 'A192GCM':
     case 'A256GCM':
-      length = parseInt(alg.slice(1, 4), 10)
+      length = +alg.slice(1, 4)
       algorithm = { name: 'AES-GCM', length }
       keyUsages = ['encrypt', 'decrypt']
       break
@@ -127,5 +128,5 @@ export async function generateSecret(
       unsupportedAlg(algArgument)
   }
 
-  return crypto.subtle.generateKey(algorithm, options?.extractable ?? false, keyUsages)
+  return crypto.subtle.generateKey(algorithm, extractable ?? false, keyUsages)
 }

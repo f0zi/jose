@@ -9,6 +9,7 @@ import { jwkToKey } from '../lib/jwk_to_key.js'
 import { jwsAlgorithm } from '../lib/jws_algorithms.js'
 import { isObject } from '../lib/type_checks.js'
 import { JWSInvalid } from '../util/errors.js'
+import { normalizeJwk } from '../lib/jwk_metadata.js'
 
 /**
  * EmbeddedJWK is an implementation of a {@link types.GetKeyFunction GetKeyFunction} intended to be
@@ -52,8 +53,21 @@ export async function EmbeddedJWK(
     throw new JWSInvalid('"jwk" (JSON Web Key) Header Parameter must be a JSON object')
   }
 
+  let jwk: types.JWK
+  try {
+    jwk = normalizeJwk(joseHeader.jwk)
+  } catch (cause) {
+    throw new JWSInvalid('Invalid Embedded JWK', { cause })
+  }
+
   const entry = jwsAlgorithm(joseHeader.alg)
-  const key = await jwkToKey(entry, { ...joseHeader.jwk, ext: true })
+  if (jwk.use !== undefined && jwk.use !== 'sig') {
+    throw new JWSInvalid('Invalid Embedded JWK, its "use" must be "sig" when present')
+  }
+  if (jwk.alg !== undefined && jwk.alg !== entry.alg) {
+    throw new JWSInvalid(`Invalid Embedded JWK, its "alg" must be "${entry.alg}" when present`)
+  }
+  const key = await jwkToKey(entry, { ...jwk, ext: true })
 
   if (key.type !== 'public') {
     throw new JWSInvalid('"jwk" (JSON Web Key) Header Parameter must be a public key')

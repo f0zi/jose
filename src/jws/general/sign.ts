@@ -152,12 +152,13 @@ export class GeneralSign {
     }
 
     const encoded: NonNullable<SignInput['encoded']> = []
+    let b64: boolean | undefined
 
     for (let i = 0; i < this.#signatures.length; i++) {
       const signature = this.#signatures[i]
       const [protectedHeader, unprotectedHeader, key, crit] = signature.state
 
-      const { payload, ...rest } = await createSignature(
+      const [{ payload, ...rest }, signatureB64] = await createSignature(
         {
           payload: this.#payload,
           protectedHeader,
@@ -168,9 +169,10 @@ export class GeneralSign {
         key,
       )
 
-      if (i === 0) {
+      if (b64 === undefined) {
+        b64 = signatureB64
         jws.payload = payload
-      } else if (jws.payload !== payload) {
+      } else if (b64 !== signatureB64) {
         throw new JWSInvalid('inconsistent use of JWS Unencoded Payload (RFC7797)')
       }
       jws.signatures.push(rest)

@@ -4,11 +4,10 @@
  * @module
  */
 
-import { unprotected, assertNotSet } from '../../lib/helpers.js'
+import { assertNotSet } from '../../lib/helpers.js'
 import type * as types from '../../types.d.ts'
-import { JWEInvalid } from '../../util/errors.js'
 import { createJWE } from '../../lib/jwe_encrypt.js'
-import { validateCritDuplicates } from '../../lib/options.js'
+import { assertUint8Array } from '../../lib/type_checks.js'
 
 /**
  * The FlattenedEncrypt class is used to build and encrypt Flattened JWE objects.
@@ -52,16 +51,15 @@ export class FlattenedEncrypt {
    * @param plaintext Binary representation of the plaintext to encrypt.
    */
   constructor(plaintext: Uint8Array) {
-    if (!(plaintext instanceof Uint8Array)) {
-      throw new TypeError('plaintext must be an instance of Uint8Array')
-    }
+    assertUint8Array(plaintext, 'plaintext')
     this.#plaintext = plaintext
   }
 
   /**
-   * Sets the JWE Key Management parameters to be used when encrypting. For ECDH based algorithms,
-   * use this method to set the "apu" (Agreement PartyUInfo) or "apv" (Agreement PartyVInfo)
-   * parameters.
+   * Sets the JWE Key Management parameters to be used when encrypting. Use this method instead of
+   * the header setters to configure algorithm inputs such as ECDH-ES "apu" (Agreement PartyUInfo)
+   * and "apv" (Agreement PartyVInfo), or PBES2 "p2c" (PBES2 Count). The parameters are added to the
+   * appropriate JOSE Header.
    *
    * @param parameters JWE Key Management parameters.
    */
@@ -152,14 +150,6 @@ export class FlattenedEncrypt {
    * @param options JWE Encryption options.
    */
   async encrypt(key: types.KeyInput, options?: types.EncryptOptions): Promise<types.FlattenedJWE> {
-    if (!this.#protectedHeader && !this.#unprotectedHeader && !this.#sharedUnprotectedHeader) {
-      throw new JWEInvalid(
-        'either setProtectedHeader, setUnprotectedHeader, or sharedUnprotectedHeader must be called before #encrypt()',
-      )
-    }
-
-    validateCritDuplicates(JWEInvalid, this.#protectedHeader)
-
     return createJWE(
       [
         this.#plaintext,
@@ -170,10 +160,11 @@ export class FlattenedEncrypt {
         this.#cek,
         this.#iv,
         this.#keyManagementParameters,
-        options?.crit,
-        options ? unprotected in options : false,
+        undefined,
+        false,
       ],
       key,
+      options,
     )
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "jose",
-  "version": "6.2.8",
+  "version": "6.2.10",
   "description": "JWA, JWS, JWE, JWT, JWK, JWKS for Node.js, Browser, Cloudflare Workers, Deno, Bun, and other Web-interoperable runtimes",
   "keywords": [
     "akp",
@@ -223,6 +223,7 @@
     "tap:bun": "./tap/.bun.sh",
     "tap:deno": "./tap/.deno.sh",
     "tap:electron": "./tap/.electron.sh",
+    "tap:llrt": "./tap/.llrt.sh",
     "tap:node": "bash -c './tap/.node.sh'",
     "tap:workerd": "./tap/.workerd.sh",
     "typecheck:tap": "tsc -p tap",
@@ -239,6 +240,7 @@
     "@types/qunit": "^2.19.14",
     "ava": "^7.0.0",
     "esbuild": "^0.28.1",
+    "fast-check": "^4.9.0",
     "npm-run-all2": "^9.0.3",
     "patch-package": "^8.0.1",
     "prettier": "^3.9.6",

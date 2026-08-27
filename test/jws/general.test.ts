@@ -1,7 +1,7 @@
 import test from 'ava'
 import * as crypto from 'crypto'
 
-import { GeneralSign, generalVerify } from '../../src/index.js'
+import { FlattenedSign, GeneralSign, generalVerify } from '../../src/index.js'
 
 test.before(async (t) => {
   const encode = TextEncoder.prototype.encode.bind(new TextEncoder())
@@ -40,6 +40,29 @@ test('General JWS signing b64:false', async (t) => {
   t.is(generalJws.signatures.length, 2)
 })
 
+test('General JWS signing compares serialized b64 modes', async (t) => {
+  let b64Reads = 0
+  const protectedHeader = {
+    alg: 'HS256',
+    crit: ['b64'],
+    get b64() {
+      b64Reads++
+      return b64Reads === 1 ? false : true
+    },
+  }
+
+  const generalJws = await new GeneralSign(new TextEncoder().encode('foo'))
+    .addSignature(t.context.secret)
+    .setProtectedHeader(protectedHeader)
+    .addSignature(t.context.secret)
+    .setProtectedHeader({ alg: 'HS256', b64: false, crit: ['b64'] })
+    .sign()
+
+  t.is(b64Reads, 1)
+  t.is(generalJws.payload, '')
+  await t.notThrowsAsync(generalVerify({ ...generalJws, payload: 'foo' }, t.context.secret))
+})
+
 test('General JWS signing validations', async (t) => {
   const sig = new GeneralSign(t.context.plaintext)
 
@@ -68,6 +91,135 @@ test('General JWS signing validations', async (t) => {
     message: 'inconsistent use of JWS Unencoded Payload (RFC7797)',
     code: 'ERR_JWS_INVALID',
   })
+})
+
+test('GeneralSign JOSE header values must be objects', async (t) => {
+  for (const value of [null, 'not an object', [], new Date(0), 42, false]) {
+    await t.throwsAsync(
+      new GeneralSign(t.context.plaintext)
+        .addSignature(t.context.secret)
+        .setProtectedHeader(value as never)
+        .setUnprotectedHeader({ alg: 'HS256' })
+        .sign(),
+      { code: 'ERR_JWS_INVALID' },
+    )
+
+    await t.throwsAsync(
+      new GeneralSign(t.context.plaintext)
+        .addSignature(t.context.secret)
+        .setProtectedHeader({ alg: 'HS256' })
+        .setUnprotectedHeader(value as never)
+        .sign(),
+      { code: 'ERR_JWS_INVALID' },
+    )
+  }
+})
+
+test('General JWS verification rejects inconsistent b64 modes', async (t) => {
+  const encoded = await new FlattenedSign(new TextEncoder().encode('foo'))
+    .setProtectedHeader({ alg: 'HS256' })
+    .sign(t.context.secret)
+  const unencoded = await new FlattenedSign(new TextEncoder().encode(encoded.payload))
+    .setProtectedHeader({ alg: 'HS256', b64: false, crit: ['b64'] })
+    .sign(t.context.secret)
+
+  const signatures = [
+    { protected: encoded.protected, signature: encoded.signature },
+    { protected: unencoded.protected, signature: unencoded.signature },
+  ]
+  let resolveCalls = 0
+  const resolve = () => {
+    resolveCalls++
+    return t.context.secret
+  }
+
+  for (const ordered of [signatures, [...signatures].reverse()]) {
+    await t.throwsAsync(generalVerify({ payload: encoded.payload, signatures: ordered }, resolve), {
+      code: 'ERR_JWS_INVALID',
+      message: 'inconsistent use of JWS Unencoded Payload (RFC7797)',
+    })
+  }
+  t.is(resolveCalls, 0)
+
+  const { payload } = await generalVerify(
+    { payload: encoded.payload, signatures: [signatures[0], signatures[0]] },
+    resolve,
+  )
+  t.deepEqual(payload, new TextEncoder().encode('foo'))
+  t.is(resolveCalls, 1)
+
+  const ignored = await new FlattenedSign(new TextEncoder().encode('foo'))
+    .setProtectedHeader({ alg: 'HS256', b64: false })
+    .sign(t.context.secret)
+  const ignoredResult = await generalVerify(
+    {
+      payload: encoded.payload,
+      signatures: [signatures[0], { protected: ignored.protected, signature: ignored.signature }],
+    },
+    t.context.secret,
+  )
+  t.deepEqual(ignoredResult.payload, new TextEncoder().encode('foo'))
+
+  const unrecognized = await new FlattenedSign(new TextEncoder().encode(encoded.payload))
+    .setProtectedHeader({
+      alg: 'HS256',
+      b64: false,
+      crit: ['b64', 'unknown'],
+      unknown: true,
+    })
+    .sign(t.context.secret, { crit: { unknown: true } })
+  await t.throwsAsync(
+    generalVerify(
+      {
+        payload: encoded.payload,
+        signatures: [
+          { protected: unrecognized.protected, signature: unrecognized.signature },
+          signatures[0],
+        ],
+      },
+      resolve,
+    ),
+    {
+      code: 'ERR_JWS_INVALID',
+      message: 'inconsistent use of JWS Unencoded Payload (RFC7797)',
+    },
+  )
+  t.is(resolveCalls, 1)
+
+  const throwing = Object.defineProperty({ signature: '' }, 'protected', {
+    get() {
+      throw new Error('unexpected getter')
+    },
+  })
+  const afterThrowing = await generalVerify(
+    { payload: encoded.payload, signatures: [throwing as never, signatures[0]] },
+    resolve,
+  )
+  t.deepEqual(afterThrowing.payload, new TextEncoder().encode('foo'))
+  t.is(resolveCalls, 2)
+
+  let protectedReads = 0
+  const switching = Object.defineProperty({ signature: unencoded.signature }, 'protected', {
+    enumerable: true,
+    get() {
+      protectedReads++
+      return protectedReads === 1 ? encoded.protected : unencoded.protected
+    },
+  })
+  const afterSwitching = await generalVerify(
+    { payload: encoded.payload, signatures: [switching as never, signatures[0]] },
+    t.context.secret,
+  )
+  t.is(protectedReads, 1)
+  t.deepEqual(afterSwitching.protectedHeader, { alg: 'HS256' })
+  t.deepEqual(afterSwitching.payload, new TextEncoder().encode('foo'))
+
+  const detached = new TextEncoder().encode(encoded.payload)
+  await t.throwsAsync(generalVerify({ payload: detached, signatures }, resolve), {
+    code: 'ERR_JWS_INVALID',
+    message: 'inconsistent use of JWS Unencoded Payload (RFC7797)',
+  })
+  t.is(resolveCalls, 2)
 })
 
 test('General JWS verify format validation', async (t) => {
@@ -141,6 +293,19 @@ test('General JWS verify format validation', async (t) => {
   }
 })
 
+test('an empty protected member is not an encoded protected header', async (t) => {
+  const jws = await new GeneralSign(t.context.plaintext)
+    .addSignature(t.context.secret)
+    .setUnprotectedHeader({ alg: 'HS256' })
+    .sign()
+
+  jws.signatures[0].protected = ''
+
+  await t.throwsAsync(generalVerify(jws, t.context.secret), {
+    code: 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED',
+  })
+})
+
 test('sign empty data', async (t) => {
   const jws = await new GeneralSign(new Uint8Array(0))
     .addSignature(new Uint8Array(32))
@@ -151,4 +316,15 @@ test('sign empty data', async (t) => {
 
   const { payload } = await generalVerify(jws, new Uint8Array(32))
   t.is(payload.byteLength, 0)
+
+  const mixed = new GeneralSign(new Uint8Array(0))
+    .addSignature(new Uint8Array(32))
+    .setProtectedHeader({ alg: 'HS256' })
+    .addSignature(new Uint8Array(32))
+    .setProtectedHeader({ alg: 'HS256', b64: false, crit: ['b64'] })
+
+  await t.throwsAsync(mixed.sign(), {
+    message: 'inconsistent use of JWS Unencoded Payload (RFC7797)',
+    code: 'ERR_JWS_INVALID',
+  })
 })

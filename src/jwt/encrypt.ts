@@ -5,9 +5,16 @@
  */
 
 import type * as types from '../types.d.ts'
-import { CompactEncrypt } from '../jwe/compact/encrypt.js'
-import { JWTClaimsBuilder } from '../lib/jwt_claims_set.js'
+import { createJWE } from '../lib/jwe_encrypt.js'
+import { JWTClaimsBuilder, jwtClaim, jwtData } from '../lib/jwt_claims_set.js'
 import { assertNotSet } from '../lib/helpers.js'
+
+/**
+ * EncryptJWT constructor
+ *
+ * @param payload The JWT Claims Set object. Defaults to an empty object.
+ */
+const EncryptJWT_base: new (payload?: types.JWTPayload) => types.ProduceJWT = JWTClaimsBuilder
 
 /**
  * The EncryptJWT class is used to build and encrypt Compact JWE formatted JSON Web Tokens.
@@ -30,7 +37,7 @@ import { assertNotSet } from '../lib/helpers.js'
  * console.log(jwt)
  * ```
  */
-export class EncryptJWT implements types.ProduceJWT {
+export class EncryptJWT extends EncryptJWT_base {
   #cek!: Uint8Array
 
   #iv!: Uint8Array
@@ -45,52 +52,6 @@ export class EncryptJWT implements types.ProduceJWT {
 
   #replicateAudienceAsHeader!: boolean
 
-  #jwt: JWTClaimsBuilder
-
-  /**
-   * {@link EncryptJWT} constructor
-   *
-   * @param payload The JWT Claims Set object. Defaults to an empty object.
-   */
-  constructor(payload: types.JWTPayload = {}) {
-    this.#jwt = new JWTClaimsBuilder(payload)
-  }
-
-  setIssuer(issuer: string): this {
-    this.#jwt.iss = issuer
-    return this
-  }
-
-  setSubject(subject: string): this {
-    this.#jwt.sub = subject
-    return this
-  }
-
-  setAudience(audience: string | string[]): this {
-    this.#jwt.aud = audience
-    return this
-  }
-
-  setJti(jwtId: string): this {
-    this.#jwt.jti = jwtId
-    return this
-  }
-
-  setNotBefore(input: number | string | Date): this {
-    this.#jwt.nbf = input
-    return this
-  }
-
-  setExpirationTime(input: number | string | Date): this {
-    this.#jwt.exp = input
-    return this
-  }
-
-  setIssuedAt(input?: number | string | Date): this {
-    this.#jwt.iat = input
-    return this
-  }
-
   /**
    * Sets the JWE Protected Header on the EncryptJWT object.
    *
@@ -104,9 +65,10 @@ export class EncryptJWT implements types.ProduceJWT {
   }
 
   /**
-   * Sets the JWE Key Management parameters to be used when encrypting. For ECDH based algorithms,
-   * use this method to set the "apu" (Agreement PartyUInfo) or "apv" (Agreement PartyVInfo)
-   * parameters.
+   * Sets the JWE Key Management parameters to be used when encrypting. Use this method instead of
+   * the header setters to configure algorithm inputs such as ECDH-ES "apu" (Agreement PartyUInfo)
+   * and "apv" (Agreement PartyVInfo), or PBES2 "p2c" (PBES2 Count). The parameters are added to the
+   * appropriate JOSE Header.
    *
    * @param parameters JWE Key Management parameters.
    */
@@ -184,7 +146,7 @@ export class EncryptJWT implements types.ProduceJWT {
    * @param options JWE Encryption options.
    */
   async encrypt(key: types.KeyInput, options?: types.EncryptOptions): Promise<string> {
-    const enc = new CompactEncrypt(this.#jwt.data())
+    const plaintext = jwtData(this)
     if (
       this.#protectedHeader &&
       (this.#replicateIssuerAsHeader ||
@@ -193,21 +155,29 @@ export class EncryptJWT implements types.ProduceJWT {
     ) {
       this.#protectedHeader = {
         ...this.#protectedHeader,
-        iss: this.#replicateIssuerAsHeader ? this.#jwt.iss : undefined,
-        sub: this.#replicateSubjectAsHeader ? this.#jwt.sub : undefined,
-        aud: this.#replicateAudienceAsHeader ? this.#jwt.aud : undefined,
+        iss: this.#replicateIssuerAsHeader ? jwtClaim(this, 'iss') : undefined,
+        sub: this.#replicateSubjectAsHeader ? jwtClaim(this, 'sub') : undefined,
+        aud: this.#replicateAudienceAsHeader ? jwtClaim(this, 'aud') : undefined,
       }
     }
-    enc.setProtectedHeader(this.#protectedHeader)
-    if (this.#iv) {
-      enc.setInitializationVector(this.#iv)
-    }
-    if (this.#cek) {
-      enc.setContentEncryptionKey(this.#cek)
-    }
-    if (this.#keyManagementParameters) {
-      enc.setKeyManagementParameters(this.#keyManagementParameters)
-    }
-    return enc.encrypt(key, options)
+
+    const jwe = await createJWE(
+      [
+        plaintext,
+        this.#protectedHeader,
+        undefined,
+        undefined,
+        undefined,
+        this.#cek,
+        this.#iv,
+        this.#keyManagementParameters,
+        undefined,
+        false,
+      ],
+      key,
+      options,
+    )
+
+    return [jwe.protected, jwe.encrypted_key, jwe.iv, jwe.ciphertext, jwe.tag].join('.')
   }
 }

@@ -6,6 +6,7 @@ import { keyAlgorithm, unsupportedAlg, algArgument } from './key_algorithm.js'
 import { isCryptoKey, isKeyObject } from './is_key_like.js'
 
 import type { KeyImportOptions } from '../key/import.js'
+import { validateExtractableOption } from './key_options.js'
 
 /**
  * Formats a base64 string as a PEM-encoded key with proper line breaks and headers.
@@ -189,6 +190,7 @@ const genericImport = async (
   alg: string,
   options?: KeyImportOptions,
 ) => {
+  const extractable = validateExtractableOption(options?.extractable)
   const entry = keyAlgorithm(alg, algArgument)
   if (entry.secret) {
     unsupportedAlg(algArgument)
@@ -212,7 +214,7 @@ const genericImport = async (
     keyFormat,
     keyData as Uint8Array<ArrayBuffer>,
     algorithm,
-    options?.extractable ?? isPublic,
+    extractable ?? isPublic,
     entry.usages[isPublic ? 0 : 1],
   )
 }
@@ -251,7 +253,10 @@ function spkiFromX509(buf: Uint8Array): Uint8Array {
 
   // Parse outer certificate SEQUENCE
   expectTag(state, 0x30, 'Invalid certificate structure')
-  parseLength(state) // Skip certificate length
+  const certificateLength = parseLength(state)
+  if (certificateLength < 0 || state.pos + certificateLength > state.data.length) {
+    throw new Error('Unexpected end of ASN.1 input')
+  }
 
   // Parse tbsCertificate (To Be Signed Certificate) SEQUENCE
   expectTag(state, 0x30, 'Invalid tbsCertificate structure')

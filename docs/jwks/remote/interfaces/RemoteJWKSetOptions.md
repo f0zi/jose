@@ -29,7 +29,7 @@ See [jwksCache](../variables/jwksCache.md).
 • `optional` **cacheMaxAge?**: `number`
 
 Maximum time (in milliseconds) between successful HTTP requests. Default is 600000 (10
-minutes).
+minutes). Must not be `NaN`.
 
 ***
 
@@ -38,7 +38,7 @@ minutes).
 • `optional` **cooldownDuration?**: `number`
 
 Duration (in milliseconds) for which no more HTTP requests will be triggered after a previous
-successful fetch. Default is 30000 (30 seconds).
+successful fetch. Must not be `NaN`. Default is 30000 (30 seconds).
 
 ***
 
@@ -55,4 +55,4 @@ Headers to be sent with the HTTP request.
 • `optional` **timeoutDuration?**: `number`
 
 Timeout (in milliseconds) for the HTTP request. When reached the request will be aborted and
-the verification will fail. Default is 5000 (5 seconds).
+the verification will fail. Must be a non-negative integer. Default is 5000 (5 seconds).

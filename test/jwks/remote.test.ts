@@ -18,6 +18,7 @@ import {
   importJWK,
   createRemoteJWKSet,
   customFetch,
+  jwksCache,
   errors,
   type FlattenedJWSInput,
 } from '../../src/index.js'
@@ -301,6 +302,69 @@ test.serial('createRemoteJWKSet manual reload', async (t) => {
   }
 })
 
+test.serial('an older concurrent workerd reload cannot overwrite a newer JWKS', async (t) => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'WebSocketPair')
+  Object.defineProperty(globalThis, 'WebSocketPair', {
+    configurable: true,
+    value: class {},
+  })
+
+  const responders: ((response: Response) => void)[] = []
+  const controlledFetch = () =>
+    new Promise<Response>((resolve) => {
+      responders.push(resolve)
+    })
+
+  try {
+    const JWKS = createRemoteJWKSet(new URL('https://as.example.com/jwks'), {
+      [customFetch]: controlledFetch,
+    })
+
+    const older = JWKS.reload()
+    const newer = JWKS.reload()
+
+    t.is(responders.length, 2)
+    responders[1](
+      new Response(JSON.stringify({ keys: [{ kty: 'RSA', kid: 'newer' }] }), { status: 200 }),
+    )
+    await newer
+    t.is(JWKS.jwks()!.keys[0].kid, 'newer')
+
+    responders[0](
+      new Response(JSON.stringify({ keys: [{ kty: 'RSA', kid: 'older' }] }), { status: 200 }),
+    )
+    await older
+    t.is(JWKS.jwks()!.keys[0].kid, 'newer')
+
+    responders.length = 0
+    const Recovery = createRemoteJWKSet(new URL('https://as.example.com/jwks'), {
+      [customFetch]: controlledFetch,
+    })
+    const recoverable = Recovery.reload()
+    const failing = Recovery.reload()
+
+    responders[0](
+      new Response(JSON.stringify({ keys: [{ kty: 'RSA', kid: 'recovered' }] }), { status: 200 }),
+    )
+    await recoverable
+    t.true(Recovery.reloading)
+    t.is(Recovery.jwks()!.keys[0].kid, 'recovered')
+
+    responders[1](new Response(null, { status: 500 }))
+    await t.throwsAsync(failing, {
+      message: 'Expected 200 OK from the JSON Web Key Set HTTP response',
+    })
+    t.false(Recovery.reloading)
+    t.is(Recovery.jwks()!.keys[0].kid, 'recovered')
+  } finally {
+    if (descriptor) {
+      Object.defineProperty(globalThis, 'WebSocketPair', descriptor)
+    } else {
+      Reflect.deleteProperty(globalThis, 'WebSocketPair')
+    }
+  }
+})
+
 test.serial('refreshes the JWKS once stale', async (t) => {
   timekeeper.freeze(now * 1000)
   const jwk = {
@@ -368,6 +432,88 @@ test.serial('can be configured to never be stale', async (t) => {
     await t.notThrowsAsync(jwtVerify(jwt, JWKS))
     timekeeper.travel((now + 60 * 10) * 1000)
     await t.notThrowsAsync(jwtVerify(jwt, JWKS))
+  }
+})
+
+test('remote JWKS duration options reject NaN', (t) => {
+  const url = new URL('https://as.example.com/jwks')
+
+  for (const option of ['timeoutDuration', 'cooldownDuration', 'cacheMaxAge'] as const) {
+    t.throws(() => createRemoteJWKSet(url, { [option]: NaN }), {
+      instanceOf: TypeError,
+    })
+  }
+})
+
+test('remote JWKS timeoutDuration must be a non-negative integer', (t) => {
+  const url = new URL('https://as.example.com/jwks')
+
+  for (const timeoutDuration of [-1, 0.5, Infinity, -Infinity]) {
+    t.throws(() => createRemoteJWKSet(url, { timeoutDuration }), {
+      instanceOf: TypeError,
+    })
+  }
+
+  t.notThrows(() => createRemoteJWKSet(url, { timeoutDuration: 0 }))
+})
+
+test('remote JWKS duration options are read once', (t) => {
+  const url = new URL('https://as.example.com/jwks')
+
+  for (const [option, value] of [
+    ['timeoutDuration', 0],
+    ['cooldownDuration', 30_000],
+    ['cacheMaxAge', 600_000],
+  ] as const) {
+    let reads = 0
+    const options = {} as Record<string, unknown>
+    Object.defineProperty(options, option, {
+      enumerable: true,
+      get() {
+        reads++
+        return value
+      },
+    })
+
+    t.notThrows(() => createRemoteJWKSet(url, options))
+    t.is(reads, 1)
+  }
+})
+
+test('remote JWKS validates a single cache snapshot', (t) => {
+  timekeeper.freeze(now * 1000)
+  const url = new URL('https://as.example.com/jwks')
+  const jwks = { keys: [] }
+  let timestampReads = 0
+  let jwksReads = 0
+  const cache = Object.defineProperties(
+    {},
+    {
+      uat: {
+        enumerable: true,
+        get() {
+          timestampReads++
+          return timestampReads === 1 ? now * 1000 : NaN
+        },
+      },
+      jwks: {
+        enumerable: true,
+        get() {
+          jwksReads++
+          return jwksReads === 1 ? jwks : { keys: [null] }
+        },
+      },
+    },
+  )
+
+  const resolver = createRemoteJWKSet(url, { [jwksCache]: cache })
+  t.deepEqual(resolver.jwks(), jwks)
+  t.is(timestampReads, 1)
+  t.is(jwksReads, 1)
+
+  for (const uat of [NaN, Infinity, now * 1000 - 600_000]) {
+    const stale = createRemoteJWKSet(url, { [jwksCache]: { uat, jwks } })
+    t.is(stale.jwks(), undefined)
   }
 })
 

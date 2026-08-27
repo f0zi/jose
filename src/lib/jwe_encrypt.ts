@@ -2,14 +2,20 @@ import type * as types from '../types.d.ts'
 import { encode as b64u } from '../util/base64url.js'
 import { encrypt } from './content_encryption.js'
 import { encryptKeyManagement } from './key_management.js'
-import { JOSENotSupported, JWEInvalid } from '../util/errors.js'
-import { isDisjoint } from './type_checks.js'
+import { JWEInvalid } from '../util/errors.js'
+import { assertUint8Array, isDisjoint, isObject } from './type_checks.js'
 import { concat, encode } from './buffer_utils.js'
-import { validateCrit, JWE_RECOGNIZED } from './options.js'
+import {
+  serializeJoseHeader,
+  validateCrit,
+  validateCritDuplicates,
+  JWE_RECOGNIZED,
+} from './options.js'
 import { prepareKey } from './key.js'
 import { jweAlgorithm, jweEncryption } from './jwe_algorithms.js'
 import type { JWEEncryption } from './jwe_algorithms.js'
-import { compress } from './deflate.js'
+import { compress, validateZip } from './deflate.js'
+import { unprotected } from './helpers.js'
 
 export type EncryptInput = [
   plaintext: Uint8Array,
@@ -32,18 +38,66 @@ export type CheckedHeaders = [
   encEntry: JWEEncryption,
 ]
 
-/**
- * Validates the headers of one recipient. Split out so a General JWE can validate every recipient
- * up front and then encrypt without validating any of them a second time.
- */
-export function checkEncryptHeaders(input: EncryptInput): CheckedHeaders {
-  const [, protectedHeader, unprotectedHeader, sharedUnprotectedHeader, , , , , crit] = input
-
+/** https://www.rfc-editor.org/rfc/rfc7516#section-7.2.1 */
+export function checkDisjoint(
+  protectedHeader: types.JWEHeaderParameters | undefined,
+  unprotectedHeader: types.JWEHeaderParameters | undefined,
+  sharedUnprotectedHeader: types.JWEHeaderParameters | undefined,
+): void {
   if (!isDisjoint(protectedHeader, unprotectedHeader, sharedUnprotectedHeader)) {
     throw new JWEInvalid(
       'JWE Protected, JWE Shared Unprotected and JWE Per-Recipient Header Parameter names must be disjoint',
     )
   }
+}
+
+/**
+ * Validates the headers of one recipient. Split out so a General JWE can validate every recipient
+ * up front and then encrypt without validating any of them a second time.
+ */
+export function checkEncryptHeaders(input: EncryptInput): CheckedHeaders {
+  let [
+    ,
+    protectedHeader,
+    unprotectedHeader,
+    sharedUnprotectedHeader,
+    aad,
+    cek,
+    iv,
+    keyManagementParameters,
+    crit,
+  ] = input
+
+  if (aad !== undefined) {
+    assertUint8Array(aad, 'JWE Additional Authenticated Data')
+  }
+
+  if (cek !== undefined) {
+    assertUint8Array(cek, 'JWE Content Encryption Key')
+  }
+
+  if (iv !== undefined) {
+    assertUint8Array(iv, 'JWE Initialization Vector')
+  }
+
+  if (protectedHeader !== undefined) {
+    protectedHeader = serializeJoseHeader(JWEInvalid, protectedHeader)[0]
+    input[1] = protectedHeader
+  }
+  if (unprotectedHeader !== undefined) {
+    unprotectedHeader = serializeJoseHeader(JWEInvalid, unprotectedHeader)[0]
+    input[2] = unprotectedHeader
+  }
+  if (sharedUnprotectedHeader !== undefined) {
+    sharedUnprotectedHeader = serializeJoseHeader(JWEInvalid, sharedUnprotectedHeader)[0]
+    input[3] = sharedUnprotectedHeader
+  }
+
+  if (keyManagementParameters !== undefined && !isObject(keyManagementParameters)) {
+    throw new TypeError('JWE Key Management Parameters must be an object')
+  }
+
+  checkDisjoint(protectedHeader, unprotectedHeader, sharedUnprotectedHeader)
 
   const joseHeader: types.JWEHeaderParameters = {
     ...protectedHeader,
@@ -51,19 +105,10 @@ export function checkEncryptHeaders(input: EncryptInput): CheckedHeaders {
     ...sharedUnprotectedHeader,
   }
 
+  validateCritDuplicates(JWEInvalid, protectedHeader)
   validateCrit(JWEInvalid, JWE_RECOGNIZED, crit, protectedHeader, joseHeader)
 
-  if (joseHeader.zip !== undefined && joseHeader.zip !== 'DEF') {
-    throw new JOSENotSupported(
-      'Unsupported JWE "zip" (Compression Algorithm) Header Parameter value.',
-    )
-  }
-
-  if (joseHeader.zip !== undefined && !protectedHeader?.zip) {
-    throw new JWEInvalid(
-      'JWE "zip" (Compression Algorithm) Header Parameter MUST be in a protected header.',
-    )
-  }
+  validateZip(joseHeader, protectedHeader)
 
   const { alg, enc } = joseHeader
 
@@ -121,6 +166,10 @@ export async function encryptJWE(
     } else {
       protectedHeader = protectedHeader ? { ...protectedHeader, ...parameters } : parameters
     }
+
+    // The generated Key Management Parameters join a header only after the input headers were
+    // checked, so a name they collide with in another header would otherwise reach the result.
+    checkDisjoint(protectedHeader, unprotectedHeader, sharedUnprotectedHeader)
   }
 
   let protectedHeaderS: string
@@ -189,6 +238,18 @@ export async function encryptJWE(
 export async function createJWE(
   input: EncryptInput,
   key: types.KeyInput,
+  options?: types.EncryptOptions,
 ): Promise<types.FlattenedJWE> {
+  if (!input[1] && !input[2] && !input[3]) {
+    throw new JWEInvalid(
+      'either setProtectedHeader, setUnprotectedHeader, or sharedUnprotectedHeader must be called before #encrypt()',
+    )
+  }
+
+  if (options !== undefined) {
+    input[8] = options?.crit
+    input[9] = options ? unprotected in options : false
+  }
+
   return encryptJWE(input, checkEncryptHeaders(input), key)
 }

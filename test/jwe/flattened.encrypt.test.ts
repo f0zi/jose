@@ -137,6 +137,111 @@ test('FlattenedEncrypt.prototype.setSharedUnprotectedHeader', (t) => {
   )
 })
 
+test('FlattenedEncrypt JOSE header values must be objects', async (t) => {
+  for (const value of [null, 'not an object', [], new Date(0), 42, false]) {
+    await t.throwsAsync(
+      new FlattenedEncrypt(t.context.plaintext)
+        .setProtectedHeader(value as never)
+        .setUnprotectedHeader({ alg: 'dir', enc: 'A128GCM' })
+        .encrypt(t.context.secret),
+      { code: 'ERR_JWE_INVALID' },
+    )
+
+    await t.throwsAsync(
+      new FlattenedEncrypt(t.context.plaintext)
+        .setProtectedHeader({ alg: 'dir', enc: 'A128GCM' })
+        .setSharedUnprotectedHeader(value as never)
+        .encrypt(t.context.secret),
+      { code: 'ERR_JWE_INVALID' },
+    )
+
+    await t.throwsAsync(
+      new FlattenedEncrypt(t.context.plaintext)
+        .setProtectedHeader({ alg: 'dir', enc: 'A128GCM' })
+        .setUnprotectedHeader(value as never)
+        .encrypt(t.context.secret),
+      { code: 'ERR_JWE_INVALID' },
+    )
+  }
+})
+
+test('FlattenedEncrypt key management parameters must be an object', async (t) => {
+  for (const value of [null, 'not an object', [], new Date(0), 42, false]) {
+    await t.throwsAsync(
+      new FlattenedEncrypt(t.context.plaintext)
+        .setProtectedHeader({ alg: 'dir', enc: 'A128GCM' })
+        .setKeyManagementParameters(value as never)
+        .encrypt(t.context.secret),
+      { instanceOf: TypeError },
+    )
+  }
+})
+
+test('critical JWE extension values must survive JSON serialization', async (t) => {
+  for (const foo of [() => true, Symbol('foo')]) {
+    await t.throwsAsync(
+      new FlattenedEncrypt(t.context.plaintext)
+        .setProtectedHeader({ alg: 'dir', enc: 'A128GCM', crit: ['foo'], foo })
+        .encrypt(t.context.secret, { crit: { foo: true } }),
+      { code: 'ERR_JWE_INVALID' },
+    )
+
+    await t.throwsAsync(
+      new FlattenedEncrypt(t.context.plaintext)
+        .setProtectedHeader({ enc: 'A128GCM', crit: ['foo'] })
+        .setUnprotectedHeader({ alg: 'dir', foo })
+        .encrypt(t.context.secret, { crit: { foo: false } }),
+      { code: 'ERR_JWE_INVALID' },
+    )
+  }
+
+  await t.notThrowsAsync(
+    new FlattenedEncrypt(t.context.plaintext)
+      .setProtectedHeader({ enc: 'A128GCM', crit: ['foo'] })
+      .setUnprotectedHeader({ alg: 'dir', foo: true })
+      .encrypt(t.context.secret, { crit: { foo: false } }),
+  )
+
+  let critReads = 0
+  const jwe = await new FlattenedEncrypt(t.context.plaintext)
+    .setProtectedHeader({
+      alg: 'dir',
+      enc: 'A128GCM',
+      get crit() {
+        critReads++
+        return critReads === 1 ? ['foo'] : ['foo', 'foo']
+      },
+      foo: true,
+    })
+    .encrypt(t.context.secret, { crit: { foo: true } })
+
+  t.is(critReads, 1)
+  t.deepEqual(decodeProtectedHeader(jwe).crit, ['foo'])
+})
+
+test('FlattenedEncrypt only uses serialized protected header parameters', async (t) => {
+  const inherited = Object.create({ alg: 'dir', enc: 'A128GCM' })
+  const nonEnumerable = Object.defineProperties(
+    {},
+    {
+      alg: { value: 'dir' },
+      enc: { value: 'A128GCM' },
+    },
+  )
+
+  for (const protectedHeader of [inherited, nonEnumerable]) {
+    await t.throwsAsync(
+      new FlattenedEncrypt(t.context.plaintext)
+        .setProtectedHeader(protectedHeader)
+        .encrypt(t.context.secret),
+      {
+        code: 'ERR_JWE_INVALID',
+        message: 'JWE "alg" (Algorithm) Header Parameter missing or invalid',
+      },
+    )
+  }
+})
+
 test('FlattenedEncrypt.prototype.setInitializationVector', (t) => {
   t.throws(
     () =>
@@ -196,6 +301,33 @@ test('FlattenedEncrypt.prototype.encrypt JOSE header must be disjoint', async (t
   )
 })
 
+test('FlattenedEncrypt.prototype.encrypt generated Key Management Parameters must be disjoint', async (t) => {
+  // The generated "p2s" and "p2c" join the JWE Protected Header, so a "p2c" the caller put in
+  // another header would make the result violate RFC 7516 Section 7.2.1.
+  await t.throwsAsync(
+    new FlattenedEncrypt(t.context.plaintext)
+      .setProtectedHeader({ alg: 'PBES2-HS256+A128KW', enc: 'A128GCM' })
+      .setSharedUnprotectedHeader({ p2c: 4096 })
+      .encrypt(t.context.secret),
+    {
+      code: 'ERR_JWE_INVALID',
+      message:
+        'JWE Protected, JWE Shared Unprotected and JWE Per-Recipient Header Parameter names must be disjoint',
+    },
+  )
+  await t.throwsAsync(
+    new FlattenedEncrypt(t.context.plaintext)
+      .setProtectedHeader({ alg: 'A128GCMKW', enc: 'A128GCM' })
+      .setUnprotectedHeader({ tag: 'not-the-generated-one' })
+      .encrypt(t.context.secret),
+    {
+      code: 'ERR_JWE_INVALID',
+      message:
+        'JWE Protected, JWE Shared Unprotected and JWE Per-Recipient Header Parameter names must be disjoint',
+    },
+  )
+})
+
 test('FlattenedEncrypt.prototype.encrypt JOSE header have an alg', async (t) => {
   await t.throwsAsync(
     new FlattenedEncrypt(t.context.plaintext)
@@ -242,6 +374,34 @@ test('PBES2 p2c must be a positive integer on encrypt', async (t) => {
         code: 'ERR_JWE_INVALID',
         message: 'PBES2 Count Input must be a positive integer',
       },
+    )
+  }
+})
+
+test('ECDH apu and apv must be Uint8Array instances', async (t) => {
+  const { publicKey } = await generateKeyPair('ECDH-ES')
+
+  for (const parameter of ['apu', 'apv'] as const) {
+    await t.throwsAsync(
+      new FlattenedEncrypt(t.context.plaintext)
+        .setProtectedHeader({ alg: 'ECDH-ES', enc: 'A128GCM' })
+        .setKeyManagementParameters({ [parameter]: 'abc' as never })
+        .encrypt(publicKey),
+      { instanceOf: TypeError },
+    )
+  }
+})
+
+test('ECDH epk must not ignore invalid falsy values', async (t) => {
+  const { publicKey } = await generateKeyPair('ECDH-ES')
+
+  for (const epk of [null, false, 0, '']) {
+    await t.throwsAsync(
+      new FlattenedEncrypt(t.context.plaintext)
+        .setProtectedHeader({ alg: 'ECDH-ES', enc: 'A128GCM' })
+        .setKeyManagementParameters({ epk: epk as never })
+        .encrypt(publicKey),
+      { instanceOf: TypeError },
     )
   }
 })
@@ -323,6 +483,18 @@ test('a zero-length additional authenticated data round trips', async (t) => {
 
   const { plaintext } = await flattenedDecrypt(jwe, cek)
   t.deepEqual(plaintext, t.context.plaintext)
+})
+
+test('additional authenticated data must be a Uint8Array', async (t) => {
+  for (const aad of ['secret aad', [1, 2, 3], new ArrayBuffer(3)]) {
+    await t.throwsAsync(
+      new FlattenedEncrypt(t.context.plaintext)
+        .setProtectedHeader({ alg: 'dir', enc: 'A256GCM' })
+        .setAdditionalAuthenticatedData(aad as never)
+        .encrypt(new Uint8Array(32)),
+      { instanceOf: TypeError },
+    )
+  }
 })
 
 test('a non-empty additional authenticated data is still carried', async (t) => {

@@ -1,4 +1,5 @@
 import { JOSENotSupported, JWEInvalid, JWSInvalid } from '../util/errors.js'
+import { isObject } from './type_checks.js'
 
 interface CritCheckHeader {
   b64?: boolean
@@ -92,4 +93,41 @@ export function validateCrit(
   }
 
   return protectedHeader.crit
+}
+
+export function validateB64(
+  protectedHeader: CritCheckHeader | undefined,
+  extensions: string[],
+): boolean {
+  if (extensions.includes('b64')) {
+    const b64 = protectedHeader!.b64
+    if (typeof b64 !== 'boolean') {
+      throw new JWSInvalid(
+        'The "b64" (base64url-encode payload) Header Parameter must be a boolean',
+      )
+    }
+    return b64
+  }
+
+  return true
+}
+
+export function serializeJoseHeader<T extends CritCheckHeader>(
+  Err: typeof JWEInvalid | typeof JWSInvalid,
+  header: T,
+): [header: T, serialized: string] {
+  let serialized: string
+  let parsed: unknown
+  try {
+    serialized = JSON.stringify(header)!
+    parsed = JSON.parse(serialized)
+  } catch (cause) {
+    throw new Err('JOSE Header is not valid JSON', { cause })
+  }
+
+  if (!isObject<T>(parsed)) {
+    throw new Err('JOSE Header is not a JSON object')
+  }
+
+  return [parsed, serialized]
 }

@@ -125,6 +125,16 @@ test('algorithms options', async (t) => {
 
 test('typ verification', async (t) => {
   {
+    const jwt = await new SignJWT(t.context.payload)
+      .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
+      .sign(t.context.secret)
+
+    await t.throwsAsync(jwtVerify(jwt, t.context.secret, { typ: '' }), {
+      code: 'ERR_JWT_CLAIM_VALIDATION_FAILED',
+      message: 'unexpected "typ" JWT header value',
+    })
+  }
+  {
     const typ = 'urn:example:typ'
     const jwt = await new SignJWT(t.context.payload)
       .setProtectedHeader({ alg: 'HS256', typ })
@@ -228,9 +238,8 @@ test('Issuer[] verification failed', async (t) => {
 
 test('Issuer[] verification failed []', async (t) => {
   const issuer = 'urn:example:issuer'
-  const jwt = await new SignJWT(t.context.payload)
+  const jwt = await new SignJWT({ ...t.context.payload, iss: [issuer] as never })
     .setProtectedHeader({ alg: 'HS256' })
-    .setIssuer([issuer])
     .sign(t.context.secret)
 
   await t.throwsAsync(
@@ -406,26 +415,28 @@ for (const claim of ['iat', 'nbf', 'exp']) {
 }
 
 test('Signed JWTs cannot use unencoded payload', async (t) => {
-  await t.throwsAsync(
-    jwtVerify(
-      'eyJhbGciOiJIUzI1NiIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19.foo.VklKdp4tVYD61VNPDBTqxqdEQcUL3JK-D4dGXu9NvWs',
-      t.context.secret,
-    ),
-    { code: 'ERR_JWT_INVALID', message: 'JWTs MUST NOT use unencoded payload' },
-  )
+  const jwt =
+    'eyJhbGciOiJIUzI1NiIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19.foo.VklKdp4tVYD61VNPDBTqxqdEQcUL3JK-D4dGXu9NvWs'
+
+  await t.throwsAsync(jwtVerify(jwt, t.context.secret), {
+    code: 'ERR_JWT_INVALID',
+    message: 'JWTs MUST NOT use unencoded payload',
+  })
+
+  const [protectedHeader, payload] = jwt.split('.')
+  await t.throwsAsync(jwtVerify(`${protectedHeader}.${payload}.AA`, t.context.secret), {
+    code: 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED',
+  })
 })
 
-test('"b64" is ignored when "crit" does not list it', async (t) => {
-  // RFC 7797 requires a producer to list "b64" in "crit" for the unencoded payload option to be in
-  // effect. Absent from "crit" the parameter is inert, the payload is base64url encoded like any
-  // other, and the JWT is ordinary - so this is not the case RFC 7797 Section 7 forbids.
-  const jwt = await new CompactSign(new TextEncoder().encode(JSON.stringify(t.context.payload)))
+test('JWT verification ignores b64 false without crit', async (t) => {
+  const jwt = await new CompactSign(new TextEncoder().encode('{}'))
     .setProtectedHeader({ alg: 'HS256', b64: false })
     .sign(t.context.secret)
-
   const { payload, protectedHeader } = await jwtVerify(jwt, t.context.secret)
-  t.deepEqual(protectedHeader, { alg: 'HS256', b64: false })
-  t.deepEqual(payload, t.context.payload)
+
+  t.deepEqual(payload, {})
+  t.false(protectedHeader.b64)
 })
 
 test('signatures are compared before claim set', async (t) => {
@@ -521,7 +532,7 @@ test('maxTokenAge of 0 is enforced', async (t) => {
   await t.notThrowsAsync(jwtVerify(fresh, t.context.secret, { maxTokenAge: 0 }))
 })
 
-test('clockTolerance and currentDate must be finite', async (t) => {
+test('time validation options must be finite', async (t) => {
   const jwt = await new SignJWT(t.context.payload)
     .setProtectedHeader({ alg: 'HS256' })
     .setExpirationTime(now - 30)
@@ -539,10 +550,48 @@ test('clockTolerance and currentDate must be finite', async (t) => {
     message: 'Invalid currentDate option input',
   })
 
+  const issued = await new SignJWT(t.context.payload)
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt(now)
+    .sign(t.context.secret)
+  for (const maxTokenAge of [NaN, Infinity, -Infinity]) {
+    await t.throwsAsync(jwtVerify(issued, t.context.secret, { maxTokenAge }), {
+      instanceOf: TypeError,
+      message: 'Invalid maxTokenAge option input',
+    })
+  }
+
   // The token is genuinely expired, so a valid tolerance still rejects it.
   await t.throwsAsync(jwtVerify(jwt, t.context.secret, { clockTolerance: 0 }), {
     code: 'ERR_JWT_EXPIRED',
   })
+})
+
+test('currentDate must not silently default invalid falsy values', async (t) => {
+  const jwt = await new SignJWT(t.context.payload)
+    .setProtectedHeader({ alg: 'HS256' })
+    .setExpirationTime(now + 30)
+    .sign(t.context.secret)
+
+  for (const currentDate of [null, 0, false, '']) {
+    await t.throwsAsync(jwtVerify(jwt, t.context.secret, { currentDate: currentDate as never }), {
+      instanceOf: TypeError,
+    })
+  }
+})
+
+test('maxTokenAge must not coerce arbitrary values to duration strings', async (t) => {
+  const jwt = await new SignJWT(t.context.payload)
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt()
+    .sign(t.context.secret)
+
+  await t.throwsAsync(
+    jwtVerify(jwt, t.context.secret, {
+      maxTokenAge: { toString: () => '1 hour' } as never,
+    }),
+    { instanceOf: TypeError, message: 'Invalid time period format' },
+  )
 })
 
 test('invalid UTF-8 in the Claims Set is rejected', async (t) => {

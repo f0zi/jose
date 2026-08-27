@@ -36,6 +36,60 @@ test('crit member checks check', async (t) => {
   )
 })
 
+test('non-enumerable crit options are not recognized', async (t) => {
+  const crit = Object.defineProperty({}, 'foo', { value: 0 })
+  await t.throwsAsync(
+    new FlattenedSign(encode('foo'))
+      .setProtectedHeader({ alg: 'HS256', crit: ['foo'], foo: true })
+      .sign(new Uint8Array(32), { crit: crit as never }),
+    {
+      code: 'ERR_JOSE_NOT_SUPPORTED',
+      message: 'Extension Header Parameter "foo" is not recognized',
+    },
+  )
+})
+
+test('critical extensions are checked after JSON serialization', async (t) => {
+  for (const foo of [() => true, Symbol('foo')]) {
+    await t.throwsAsync(
+      new FlattenedSign(encode('foo'))
+        .setProtectedHeader({ alg: 'HS256', crit: ['foo'], foo })
+        .sign(new Uint8Array(32), { crit: { foo: true } }),
+      { code: 'ERR_JWS_INVALID' },
+    )
+
+    await t.throwsAsync(
+      new FlattenedSign(encode('foo'))
+        .setProtectedHeader({ crit: ['foo'] })
+        .setUnprotectedHeader({ alg: 'HS256', foo })
+        .sign(new Uint8Array(32), { crit: { foo: false } }),
+      { code: 'ERR_JWS_INVALID' },
+    )
+  }
+
+  await t.notThrowsAsync(
+    new FlattenedSign(encode('foo'))
+      .setProtectedHeader({ crit: ['foo'] })
+      .setUnprotectedHeader({ alg: 'HS256', foo: true })
+      .sign(new Uint8Array(32), { crit: { foo: false } }),
+  )
+
+  const crit = ['foo']
+  await t.notThrowsAsync(
+    new FlattenedSign(encode('foo'))
+      .setProtectedHeader({
+        alg: 'HS256',
+        crit,
+        foo: true,
+        toJSON() {
+          crit.length = 0
+          return { alg: 'HS256' }
+        },
+      })
+      .sign(new Uint8Array(32), { crit: { foo: true } }),
+  )
+})
+
 test('duplicate "crit" values are rejected when producing', async (t) => {
   // RFC 7515 Section 4.1.11: producers MUST NOT include duplicate names in the "crit" list.
   await t.throwsAsync(

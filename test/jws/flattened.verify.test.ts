@@ -147,6 +147,24 @@ test('JWS format validation', async (t) => {
   }
 })
 
+test('Flattened JWS members are read once', async (t) => {
+  const fullJws = await new FlattenedSign(t.context.plaintext)
+    .setProtectedHeader({ alg: 'HS256' })
+    .sign(t.context.secret)
+  let signatureReads = 0
+  const switching = Object.defineProperty({ ...fullJws }, 'signature', {
+    enumerable: true,
+    get() {
+      signatureReads++
+      if (signatureReads > 1) throw new Error('signature was read twice')
+      return fullJws.signature
+    },
+  })
+
+  await t.notThrowsAsync(flattenedVerify(switching, t.context.secret))
+  t.is(signatureReads, 1)
+})
+
 test('sign empty data', async (t) => {
   const jws = await new FlattenedSign(new Uint8Array(0))
     .setProtectedHeader({ alg: 'HS256' })
@@ -172,5 +190,15 @@ test('a non-ASCII payload is a JWSInvalid', async (t) => {
   // A well-formed but wrong payload still fails as a signature verification failure.
   await t.throwsAsync(flattenedVerify({ ...jws, payload: 'YmFy' }, new Uint8Array(32)), {
     code: 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED',
+  })
+})
+
+test('an empty protected member is not an encoded protected header', async (t) => {
+  const jws = await new FlattenedSign(new TextEncoder().encode('foo'))
+    .setUnprotectedHeader({ alg: 'HS256' })
+    .sign(new Uint8Array(32))
+
+  await t.throwsAsync(flattenedVerify({ ...jws, protected: '' }, new Uint8Array(32)), {
+    code: 'ERR_JWS_INVALID',
   })
 })

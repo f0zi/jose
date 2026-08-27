@@ -14,89 +14,32 @@ import {
   JWKSNoMatchingKey,
   JWKSMultipleMatchingKeys,
 } from '../util/errors.js'
-import { isObject } from '../lib/type_checks.js'
-
-/**
- * A JWKS resolves public keys for verifying signatures, so only JWS algorithms are meaningful here
- *
- * - And among those, only the asymmetric ones.
- */
-function signatureAlgorithm(alg: unknown): JWSAlgorithm {
-  const entry = typeof alg === 'string' ? JWS[alg] : undefined
-  if (!entry || entry.secret) {
-    throw new JOSENotSupported('Unsupported "alg" value for a JSON Web Key Set')
-  }
-  return entry
-}
+import { isJwkSet } from '../lib/type_checks.js'
+import { snapshotJwk } from '../lib/jwk_metadata.js'
 
 interface Cache {
   [alg: string]: types.CryptoKey
 }
 
-function isJWKSLike(jwks: unknown): jwks is types.JSONWebKeySet {
-  if (!jwks || typeof jwks !== 'object') {
-    return false
-  }
-  const { keys } = jwks as { keys?: unknown }
-  return Array.isArray(keys) && keys.every(isObject<types.JWK>)
-}
+function isUsableJWK(jwk: types.JWK, entry: JWSAlgorithm, alg: string, kid: unknown): boolean {
+  const { kty, key_ops, ext, kid: jwkKid, alg: jwkAlg, use, crv } = snapshotJwk(jwk)
+  const keyOps = Array.isArray(key_ops) ? [...key_ops] : key_ops
 
-class LocalJWKSetImpl {
-  #jwks: types.JSONWebKeySet
-
-  #cached: WeakMap<types.JWK, Cache> = new WeakMap()
-
-  constructor(jwks: unknown) {
-    if (!isJWKSLike(jwks)) {
-      throw new JWKSInvalid('JSON Web Key Set malformed')
-    }
-
-    this.#jwks = structuredClone<types.JSONWebKeySet>(jwks)
-  }
-
-  jwks(): types.JSONWebKeySet {
-    return this.#jwks
-  }
-
-  async getKey(
-    protectedHeader?: types.JWSHeaderParameters,
-    token?: types.FlattenedJWSInput,
-  ): Promise<types.CryptoKey> {
-    const { alg, kid } = { ...protectedHeader, ...token?.header }
-    const entry = signatureAlgorithm(alg)
-
-    const candidates = this.#jwks!.keys.filter(
-      (jwk) =>
-        entry.kty.includes(jwk.kty!) &&
-        (typeof kid !== 'string' || kid === jwk.kid) &&
-        (!(typeof jwk.alg === 'string' || jwk.kty === 'AKP') || alg === jwk.alg) &&
-        (typeof jwk.use !== 'string' || jwk.use === 'sig') &&
-        (!Array.isArray(jwk.key_ops) || jwk.key_ops.includes('verify')) &&
-        (!entry.crv || jwk.crv === entry.crv),
-    )
-
-    const { 0: jwk, length } = candidates
-
-    if (length === 0) {
-      throw new JWKSNoMatchingKey()
-    }
-    if (length !== 1) {
-      const error = new JWKSMultipleMatchingKeys()
-
-      const _cached = this.#cached
-      error[Symbol.asyncIterator] = async function* () {
-        for (const jwk of candidates) {
-          try {
-            yield await importWithAlgCache(_cached, jwk, entry)
-          } catch {}
-        }
-      }
-
-      throw error
-    }
-
-    return importWithAlgCache(this.#cached, jwk, entry)
-  }
+  return (
+    (ext === undefined || typeof ext === 'boolean') &&
+    (keyOps === undefined ||
+      (Array.isArray(keyOps) &&
+        keyOps.every(
+          (operation, index) =>
+            typeof operation === 'string' && keyOps.indexOf(operation) === index,
+        ) &&
+        keyOps.includes('verify'))) &&
+    entry.kty.includes(kty!) &&
+    (kid === undefined || (typeof kid === 'string' && kid === jwkKid)) &&
+    (jwkAlg === undefined ? kty !== 'AKP' : alg === jwkAlg) &&
+    (use === undefined || use === 'sig') &&
+    (!entry.crv || crv === entry.crv)
+  )
 }
 
 async function importWithAlgCache(
@@ -104,18 +47,19 @@ async function importWithAlgCache(
   jwk: types.JWK,
   entry: JWSAlgorithm,
 ) {
-  const cached = cache.get(jwk) || cache.set(jwk, { __proto__: null } as unknown as Cache).get(jwk)!
-  if (cached[entry.alg] === undefined) {
-    const key = await jwkToKey(entry, { ...jwk, alg: entry.alg, ext: true })
+  const cached = cache.get(jwk) || cache.set(jwk, {}).get(jwk)!
+  const { alg } = entry
+  if (cached[alg] === undefined) {
+    const key = await jwkToKey(entry, { ...jwk, alg, ext: true })
 
     if (key.type !== 'public') {
       throw new JWKSInvalid('JSON Web Key Set members must be public keys')
     }
 
-    cached[entry.alg] = key
+    cached[alg] = key
   }
 
-  return cached[entry.alg]
+  return cached[alg]
 }
 
 /**
@@ -221,18 +165,51 @@ export interface LocalJWKSet {
  * @param jwks JSON Web Key Set formatted object.
  */
 export function createLocalJWKSet(jwks: types.JSONWebKeySet): LocalJWKSet {
-  const set = new LocalJWKSetImpl(jwks)
+  let snapshot: unknown
+  try {
+    snapshot = structuredClone(jwks)
+  } catch {}
+
+  if (!isJwkSet(snapshot)) {
+    throw new JWKSInvalid('JSON Web Key Set malformed')
+  }
+
+  const cached = new WeakMap<types.JWK, Cache>()
 
   const localJWKSet = async (
     protectedHeader?: types.JWSHeaderParameters,
     token?: types.FlattenedJWSInput,
-  ): Promise<types.CryptoKey> => set.getKey(protectedHeader, token)
+  ): Promise<types.CryptoKey> => {
+    const { alg, kid } = { ...protectedHeader, ...token?.header }
+    const entry = typeof alg === 'string' ? JWS[alg] : undefined
+    if (!entry || entry.secret) {
+      throw new JOSENotSupported('Unsupported "alg" value for a JSON Web Key Set')
+    }
 
-  Object.defineProperty(localJWKSet, 'jwks', {
-    value: () => structuredClone(set.jwks()),
-  })
+    const candidates = snapshot.keys.filter((jwk) => isUsableJWK(jwk, entry, alg!, kid))
+    const { 0: jwk, length } = candidates
 
-  // Object.defineProperties is used for the property attributes it affords and returns the
-  // un-augmented type; LocalJWKSet describes exactly what the block above installs.
-  return localJWKSet as LocalJWKSet
+    if (!length) {
+      throw new JWKSNoMatchingKey()
+    }
+    if (length !== 1) {
+      const error = new JWKSMultipleMatchingKeys()
+      error[Symbol.asyncIterator] = async function* () {
+        for (const jwk of candidates) {
+          try {
+            yield await importWithAlgCache(cached, jwk, entry)
+          } catch {}
+        }
+      }
+      throw error
+    }
+
+    return importWithAlgCache(cached, jwk, entry)
+  }
+
+  // Object.defineProperty is used for the property attributes it affords and returns the
+  // un-augmented type; LocalJWKSet describes exactly what the block below installs.
+  return Object.defineProperty(localJWKSet, 'jwks', {
+    value: () => structuredClone(snapshot),
+  }) as LocalJWKSet
 }

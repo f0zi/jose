@@ -81,15 +81,101 @@ test('Signed JWTs cannot use unencoded payload', async (t) => {
   })
 })
 
-test('"b64" is ignored when "crit" does not list it', async (t) => {
-  // Only a "b64" listed in "crit" is in effect per RFC 7797, so this one does not make the JWT an
-  // unencoded payload one and is signed like any other.
+test('SignJWT rejects unencoded payloads before validating alg', async (t) => {
+  await t.throwsAsync(
+    new SignJWT().setProtectedHeader({ b64: false, crit: ['b64'] }).sign(t.context.secret),
+    { code: 'ERR_JWT_INVALID', message: 'JWTs MUST NOT use unencoded payload' },
+  )
+})
+
+test('SignJWT uses one normalized protected header snapshot', async (t) => {
+  let b64Reads = 0
+  const jwt = await new SignJWT(t.context.payload)
+    .setProtectedHeader({
+      alg: 'HS256',
+      crit: ['b64'],
+      get b64() {
+        b64Reads++
+        return b64Reads === 1 ? true : false
+      },
+    })
+    .sign(t.context.secret)
+
+  t.is(b64Reads, 1)
+  const { protectedHeader, payload } = await jwtVerify(jwt, t.context.secret)
+  t.is(protectedHeader.b64, true)
+  t.deepEqual(payload, t.context.payload)
+})
+
+test('SignJWT protected header can only be set once', (t) => {
+  t.throws(
+    () => new SignJWT().setProtectedHeader({ alg: 'HS256' }).setProtectedHeader({ alg: 'HS384' }),
+    {
+      instanceOf: TypeError,
+      message: 'setProtectedHeader can only be called once',
+    },
+  )
+})
+
+test('time setters reject overflowing duration strings', (t) => {
+  const duration = `${'9'.repeat(400)} years`
+
+  for (const method of ['setExpirationTime', 'setNotBefore', 'setIssuedAt'] as const) {
+    t.throws(() => new SignJWT()[method](duration), {
+      instanceOf: TypeError,
+      message: 'Invalid time period format',
+    })
+  }
+})
+
+test('time setters reject values that only coerce to duration strings', (t) => {
+  const durationLike = { toString: () => '1 hour' }
+
+  for (const method of ['setExpirationTime', 'setNotBefore', 'setIssuedAt'] as const) {
+    t.throws(() => new SignJWT()[method](durationLike as never), {
+      instanceOf: TypeError,
+      message: 'Invalid time period format',
+    })
+  }
+})
+
+test('registered string claim setters reject invalid types', (t) => {
+  for (const [setClaim, message] of [
+    [() => new SignJWT().setIssuer(0 as never), '"iss" claim must be a string'],
+    [() => new SignJWT().setSubject(null as never), '"sub" claim must be a string'],
+    [() => new SignJWT().setJti({} as never), '"jti" claim must be a string'],
+    [
+      () => new SignJWT().setAudience(0 as never),
+      '"aud" claim must be a string or an array of strings',
+    ],
+    [
+      () => new SignJWT().setAudience(['audience', 0] as never),
+      '"aud" claim must be a string or an array of strings',
+    ],
+  ] as const) {
+    t.throws(setClaim, { instanceOf: TypeError, message })
+  }
+})
+
+test('JWT production rejects non-finite NumericDate claims', async (t) => {
+  for (const claim of ['exp', 'nbf', 'iat']) {
+    for (const value of [NaN, Infinity, -Infinity]) {
+      await t.throwsAsync(
+        new SignJWT({ [claim]: value }).setProtectedHeader({ alg: 'HS256' }).sign(t.context.secret),
+        { instanceOf: TypeError, message: `"${claim}" claim must be a finite number` },
+      )
+    }
+  }
+})
+
+test('Signed JWTs ignore b64 false without crit', async (t) => {
   const jwt = await new SignJWT(t.context.payload)
     .setProtectedHeader({ alg: 'HS256', b64: false })
     .sign(t.context.secret)
+  const { payload, protectedHeader } = await jwtVerify(jwt, t.context.secret)
 
-  const { protectedHeader } = await jwtVerify(jwt, t.context.secret)
-  t.deepEqual(protectedHeader, { alg: 'HS256', b64: false })
+  t.deepEqual(payload, t.context.payload)
+  t.false(protectedHeader.b64)
 })
 
 async function testJWTsetFunction(t, method, claim, value, expected = value) {

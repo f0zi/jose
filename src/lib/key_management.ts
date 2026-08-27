@@ -8,7 +8,7 @@ import type { JWEEncryption } from './jwe_algorithms.js'
 import { JOSENotSupported, JWEInvalid } from '../util/errors.js'
 import { decodeBase64url, digest } from './helpers.js'
 import { generateCek, encrypt, decrypt } from './content_encryption.js'
-import { isObject } from './type_checks.js'
+import { assertUint8Array, isObject } from './type_checks.js'
 import { checkCryptoKey, checkModulusLength, checkUsage } from './crypto_key.js'
 import { concat, encode, uint32be } from './buffer_utils.js'
 import { assertCryptoKey } from './is_key_like.js'
@@ -243,7 +243,7 @@ export async function decryptKeyManagement(
   key: types.CryptoKey | Uint8Array,
   encryptedKey: Uint8Array | undefined,
   joseHeader: types.JWEHeaderParameters,
-  options?: types.DecryptOptions,
+  maxPBES2Count?: number,
 ): Promise<types.CryptoKey | Uint8Array> {
   const entry = jweAlgorithm(alg)
   if (alg === 'dir') {
@@ -306,7 +306,7 @@ export async function decryptKeyManagement(
       if (typeof joseHeader.p2c !== 'number')
         throw new JWEInvalid(`JOSE Header "p2c" (PBES2 Count) missing or invalid`)
 
-      const p2cLimit = options?.maxPBES2Count || 10_000
+      const p2cLimit = maxPBES2Count || 10_000
 
       if (joseHeader.p2c > p2cLimit)
         throw new JWEInvalid(`JOSE Header "p2c" (PBES2 Count) out is of acceptable bounds`)
@@ -366,8 +366,14 @@ export async function encryptKeyManagement(
     case 'ECDH': {
       assertEcdhKey(key)
       const { apu, apv } = providedParameters
+      if (apu !== undefined) {
+        assertUint8Array(apu, '"apu"')
+      }
+      if (apv !== undefined) {
+        assertUint8Array(apv, '"apv"')
+      }
       let ephemeralKey: types.CryptoKey
-      if (providedParameters.epk) {
+      if (providedParameters.epk !== undefined) {
         ephemeralKey = (await prepareKey(
           entry,
           providedParameters.epk,

@@ -8,7 +8,7 @@ import type * as types from '../types.d.ts'
 import { JOSEError, JWKSNoMatchingKey, JWKSTimeout } from '../util/errors.js'
 
 import { createLocalJWKSet } from './local.js'
-import { isObject } from '../lib/type_checks.js'
+import { isJwkSet } from '../lib/type_checks.js'
 
 function isCloudflareWorkers() {
   return (
@@ -28,7 +28,7 @@ let USER_AGENT: string
 // @ts-ignore
 if (typeof navigator === 'undefined' || !navigator.userAgent?.startsWith?.('Mozilla/5.0 ')) {
   const NAME = 'jose'
-  const VERSION = 'v6.2.8'
+  const VERSION = 'v6.2.10'
   USER_AGENT = `${NAME}/${VERSION}`
 }
 
@@ -267,19 +267,19 @@ export const jwksCache: unique symbol = Symbol()
 export interface RemoteJWKSetOptions {
   /**
    * Timeout (in milliseconds) for the HTTP request. When reached the request will be aborted and
-   * the verification will fail. Default is 5000 (5 seconds).
+   * the verification will fail. Must be a non-negative integer. Default is 5000 (5 seconds).
    */
   timeoutDuration?: number
 
   /**
    * Duration (in milliseconds) for which no more HTTP requests will be triggered after a previous
-   * successful fetch. Default is 30000 (30 seconds).
+   * successful fetch. Must not be `NaN`. Default is 30000 (30 seconds).
    */
   cooldownDuration?: number
 
   /**
    * Maximum time (in milliseconds) between successful HTTP requests. Default is 600000 (10
-   * minutes).
+   * minutes). Must not be `NaN`.
    */
   cacheMaxAge?: number | typeof Infinity
 
@@ -297,7 +297,7 @@ export interface RemoteJWKSetOptions {
 export interface ExportedJWKSCache {
   /** Current cached JSON Web Key Set */
   jwks: types.JSONWebKeySet
-  /** Last updated at timestamp (seconds since epoch) */
+  /** Last updated at timestamp (milliseconds since epoch) */
   uat: number
 }
 
@@ -341,149 +341,15 @@ export interface RemoteJWKSet {
   jwks: () => types.JSONWebKeySet | undefined
 }
 
-function isFreshJwksCache(input: unknown, cacheMaxAge: number): input is ExportedJWKSCache {
-  if (typeof input !== 'object' || input === null) {
-    return false
-  }
-
-  if (!('uat' in input) || typeof input.uat !== 'number' || Date.now() - input.uat >= cacheMaxAge) {
-    return false
-  }
-
-  if (
-    !('jwks' in input) ||
-    !isObject<types.JSONWebKeySet>(input.jwks) ||
-    !Array.isArray(input.jwks.keys) ||
-    !Array.prototype.every.call(input.jwks.keys, isObject)
-  ) {
-    return false
-  }
-
-  return true
+function isFreshFor(timestamp: unknown, duration: number): timestamp is number {
+  return Number.isFinite(timestamp) && Date.now() < (timestamp as number) + duration
 }
 
-class RemoteJWKSetImpl {
-  #url: URL
-
-  #timeoutDuration: number
-
-  #cooldownDuration: number
-
-  #cacheMaxAge: number
-
-  #jwksTimestamp?: number
-
-  #pendingFetch?: Promise<unknown>
-
-  #headers: Headers
-
-  #customFetch?: FetchImplementation
-
-  #local!: ReturnType<typeof createLocalJWKSet>
-
-  #cache?: JWKSCacheInput
-
-  constructor(url: unknown, options?: RemoteJWKSetOptions) {
-    if (!(url instanceof URL)) {
-      throw new TypeError('url must be an instance of URL')
-    }
-    this.#url = new URL(url.href)
-
-    const opts = options ?? {}
-    this.#timeoutDuration = typeof opts.timeoutDuration === 'number' ? opts.timeoutDuration : 5000
-    this.#cooldownDuration =
-      typeof opts.cooldownDuration === 'number' ? opts.cooldownDuration : 30000
-    this.#cacheMaxAge = typeof opts.cacheMaxAge === 'number' ? opts.cacheMaxAge : 600000
-    this.#headers = new Headers(opts.headers)
-    if (USER_AGENT && !this.#headers.has('User-Agent')) {
-      this.#headers.set('User-Agent', USER_AGENT)
-    }
-
-    if (!this.#headers.has('accept')) {
-      this.#headers.set('accept', 'application/json')
-      this.#headers.append('accept', 'application/jwk-set+json')
-    }
-
-    this.#customFetch = opts[customFetch]
-
-    const cache = opts[jwksCache]
-    if (cache !== undefined) {
-      this.#cache = cache
-      if (isFreshJwksCache(cache, this.#cacheMaxAge)) {
-        this.#jwksTimestamp = this.#cache.uat
-        this.#local = createLocalJWKSet(this.#cache.jwks)
-      }
-    }
+function validateDuration(value: number | undefined, fallback: number, option: string): number {
+  if (Number.isNaN(value)) {
+    throw new TypeError(`"${option}" option must not be NaN`)
   }
-
-  pendingFetch(): boolean {
-    return !!this.#pendingFetch
-  }
-
-  #validFor(duration: number): boolean {
-    return typeof this.#jwksTimestamp === 'number' && Date.now() < this.#jwksTimestamp + duration
-  }
-
-  coolingDown(): boolean {
-    return this.#validFor(this.#cooldownDuration)
-  }
-
-  fresh(): boolean {
-    return this.#validFor(this.#cacheMaxAge)
-  }
-
-  jwks(): types.JSONWebKeySet | undefined {
-    return this.#local?.jwks()
-  }
-
-  async getKey(
-    protectedHeader?: types.JWSHeaderParameters,
-    token?: types.FlattenedJWSInput,
-  ): Promise<types.CryptoKey> {
-    if (!this.#local || !this.fresh()) {
-      await this.reload()
-    }
-
-    try {
-      return await this.#local(protectedHeader, token)
-    } catch (err) {
-      if (err instanceof JWKSNoMatchingKey) {
-        if (this.coolingDown() === false) {
-          await this.reload()
-          return this.#local(protectedHeader, token)
-        }
-      }
-      throw err
-    }
-  }
-
-  async reload() {
-    // Do not assume a fetch created in another request reliably resolves
-    // see https://github.com/panva/jose/issues/355 and https://github.com/panva/jose/issues/509
-    if (this.#pendingFetch && isCloudflareWorkers()) {
-      this.#pendingFetch = undefined
-    }
-
-    this.#pendingFetch ||= fetchJwks(
-      this.#url.href,
-      this.#headers,
-      AbortSignal.timeout(this.#timeoutDuration),
-      this.#customFetch,
-    )
-      .then((json) => {
-        this.#local = createLocalJWKSet(json as unknown as types.JSONWebKeySet)
-        if (this.#cache) {
-          this.#cache.uat = Date.now()
-          this.#cache.jwks = json as unknown as types.JSONWebKeySet
-        }
-        this.#jwksTimestamp = Date.now()
-      })
-      .finally(() => {
-        this.#pendingFetch = undefined
-      })
-
-    await this.#pendingFetch
-  }
+  return typeof value === 'number' ? value : fallback
 }
 
 /**
@@ -560,37 +426,126 @@ class RemoteJWKSetImpl {
  * @param options Options for the remote JSON Web Key Set.
  */
 export function createRemoteJWKSet(url: URL, options?: RemoteJWKSetOptions): RemoteJWKSet {
-  const set = new RemoteJWKSetImpl(url, options)
+  if (!(url instanceof URL)) {
+    throw new TypeError('url must be an instance of URL')
+  }
+  const href = new URL(url.href).href
+
+  const opts = options ?? {}
+  const timeoutOption = opts.timeoutDuration
+  if (
+    typeof timeoutOption === 'number' &&
+    (!Number.isInteger(timeoutOption) || timeoutOption < 0)
+  ) {
+    throw new TypeError('"timeoutDuration" option must be a non-negative integer')
+  }
+  const timeoutDuration = typeof timeoutOption === 'number' ? timeoutOption : 5000
+  const cooldownDuration = validateDuration(opts.cooldownDuration, 30000, 'cooldownDuration')
+  const cacheMaxAge = validateDuration(opts.cacheMaxAge, 600000, 'cacheMaxAge')
+  const headers = new Headers(opts.headers)
+  if (USER_AGENT && !headers.has('User-Agent')) {
+    headers.set('User-Agent', USER_AGENT)
+  }
+  if (!headers.has('accept')) {
+    headers.set('accept', 'application/json, application/jwk-set+json')
+  }
+
+  const fetchImpl = opts[customFetch]
+  const cache = opts[jwksCache]
+  let jwksTimestamp: number | undefined
+  let pendingFetch: Promise<unknown> | undefined
+  let reloadSequence = 0
+  let appliedSequence = 0
+  let local: ReturnType<typeof createLocalJWKSet> | undefined
+
+  if (cache && typeof cache === 'object') {
+    const { uat, jwks } = cache as Partial<ExportedJWKSCache>
+    if (isFreshFor(uat, cacheMaxAge) && isJwkSet(jwks)) {
+      jwksTimestamp = uat
+      local = createLocalJWKSet(jwks)
+    }
+  }
+
+  const reload = async () => {
+    // Do not assume a fetch created in another request reliably resolves
+    // see https://github.com/panva/jose/issues/355 and https://github.com/panva/jose/issues/509
+    if (pendingFetch && isCloudflareWorkers()) {
+      pendingFetch = undefined
+    }
+
+    if (!pendingFetch) {
+      const sequence = ++reloadSequence
+      const current = (pendingFetch = fetchJwks(
+        href,
+        headers,
+        AbortSignal.timeout(timeoutDuration),
+        fetchImpl,
+      )
+        .then((json) => {
+          const next = createLocalJWKSet(json as unknown as types.JSONWebKeySet)
+          if (sequence <= appliedSequence) {
+            return
+          }
+          local = next
+          const updatedAt = Date.now()
+          if (cache) {
+            cache.uat = updatedAt
+            cache.jwks = json as unknown as types.JSONWebKeySet
+          }
+          jwksTimestamp = updatedAt
+          appliedSequence = sequence
+        })
+        .finally(() => {
+          if (pendingFetch === current) {
+            pendingFetch = undefined
+          }
+        }))
+    }
+
+    await pendingFetch
+  }
 
   const remoteJWKSet = async (
     protectedHeader?: types.JWSHeaderParameters,
     token?: types.FlattenedJWSInput,
-  ): Promise<types.CryptoKey> => set.getKey(protectedHeader, token)
+  ): Promise<types.CryptoKey> => {
+    if (!local || !isFreshFor(jwksTimestamp, cacheMaxAge)) {
+      await reload()
+    }
 
-  Object.defineProperties(remoteJWKSet, {
+    try {
+      return await local!(protectedHeader, token)
+    } catch (err) {
+      if (err instanceof JWKSNoMatchingKey && !isFreshFor(jwksTimestamp, cooldownDuration)) {
+        await reload()
+        return local!(protectedHeader, token)
+      }
+      throw err
+    }
+  }
+
+  // Object.defineProperties is used for the property attributes it affords and returns the
+  // un-augmented type; RemoteJWKSet describes exactly what the block below installs.
+  return Object.defineProperties(remoteJWKSet, {
     coolingDown: {
-      get: () => set.coolingDown(),
+      get: () => isFreshFor(jwksTimestamp, cooldownDuration),
       enumerable: true,
     },
     fresh: {
-      get: () => set.fresh(),
+      get: () => isFreshFor(jwksTimestamp, cacheMaxAge),
       enumerable: true,
     },
     reload: {
-      value: () => set.reload(),
+      value: reload,
       enumerable: true,
     },
     reloading: {
-      get: () => set.pendingFetch(),
+      get: () => !!pendingFetch,
       enumerable: true,
     },
     jwks: {
-      value: () => set.jwks(),
+      value: () => local?.jwks(),
       enumerable: true,
     },
-  })
-
-  // Object.defineProperties is used for the property attributes it affords and returns the
-  // un-augmented type; RemoteJWKSet describes exactly what the block above installs.
-  return remoteJWKSet as RemoteJWKSet
+  }) as RemoteJWKSet
 }

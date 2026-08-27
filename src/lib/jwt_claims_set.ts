@@ -17,16 +17,27 @@ const multipliers: Record<string, number> = {
 const REGEX =
   /^(\+|\-)? ?(\d+|\d+\.\d+) ?(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)(?: (ago|from now))?$/i
 const checkFailed = 'check_failed'
+function invalidDuration(): never {
+  throw new TypeError('Invalid time period format')
+}
 
 export function secs(str: string): number {
+  if (typeof str !== 'string') {
+    invalidDuration()
+  }
+
   const matched = REGEX.exec(str)
 
   if (!matched || (matched[4] && matched[1])) {
-    throw new TypeError('Invalid time period format')
+    invalidDuration()
   }
 
   const value = parseFloat(matched[2])
   const numericDate = Math.round(value * multipliers[matched[3][0].toLowerCase()])
+
+  if (!Number.isFinite(numericDate)) {
+    invalidDuration()
+  }
 
   if (matched[1] === '-' || matched[4] === 'ago') {
     return -numericDate
@@ -43,6 +54,21 @@ function validateInput(label: string, input: number) {
   return input
 }
 
+function validateStringClaim(claim: 'iss' | 'sub' | 'jti', value: unknown): void {
+  if (typeof value !== 'string') {
+    throw new TypeError(`"${claim}" claim must be a string`)
+  }
+}
+
+function validateAudienceClaim(value: unknown): void {
+  if (
+    typeof value !== 'string' &&
+    (!Array.isArray(value) || Array.from(value).some((member) => typeof member !== 'string'))
+  ) {
+    throw new TypeError('"aud" claim must be a string or an array of strings')
+  }
+}
+
 function numericDate(value: number | string | Date, label: string) {
   if (typeof value === 'number') return validateInput(label, value)
   if (value instanceof Date) return validateInput(label, epoch(value))
@@ -50,11 +76,8 @@ function numericDate(value: number | string | Date, label: string) {
 }
 
 const normalizeTyp = (value: string) => {
-  if (value.includes('/')) {
-    return value.toLowerCase()
-  }
-
-  return `application/${value.toLowerCase()}`
+  const normalized = value.toLowerCase()
+  return value.includes('/') ? normalized : `application/${normalized}`
 }
 
 const checkAudiencePresence = (audPayload: unknown, audOption: unknown[]) => {
@@ -116,7 +139,7 @@ export function validateClaimsSet(
 
   const { typ } = options
   if (
-    typ &&
+    typ !== undefined &&
     (typeof protectedHeader!.typ !== 'string' ||
       normalizeTyp(protectedHeader!.typ) !== normalizeTyp(typ))
   ) {
@@ -180,7 +203,10 @@ export function validateClaimsSet(
   validateInput('clockTolerance option', tolerance)
 
   const { currentDate } = options
-  const now = validateInput('currentDate option', epoch(currentDate || new Date()))
+  const now = validateInput(
+    'currentDate option',
+    epoch(currentDate === undefined ? new Date() : currentDate),
+  )
 
   const iat = validateNumericDate(payload, 'iat', maxTokenAge !== undefined)
 
@@ -205,7 +231,10 @@ export function validateClaimsSet(
 
   if (maxTokenAge !== undefined) {
     const age = now - iat!
-    const max = typeof maxTokenAge === 'number' ? maxTokenAge : secs(maxTokenAge)
+    const max = validateInput(
+      'maxTokenAge option',
+      typeof maxTokenAge === 'number' ? maxTokenAge : secs(maxTokenAge),
+    )
 
     if (age - tolerance > max) {
       throw new JWTExpired(
@@ -216,7 +245,7 @@ export function validateClaimsSet(
       )
     }
 
-    if (age < 0 - tolerance) {
+    if (age < -tolerance) {
       throw new JWTClaimValidationFailed(
         '"iat" claim timestamp check failed (it should be in the past)',
         payload,
@@ -229,63 +258,79 @@ export function validateClaimsSet(
   return payload as types.JWTPayload
 }
 
-export class JWTClaimsBuilder {
-  #payload!: types.JWTPayload
+let producerPayloads: WeakMap<object, types.JWTPayload>
 
-  constructor(payload: types.JWTPayload) {
+function producerPayload(producer: object): types.JWTPayload {
+  return producerPayloads.get(producer)!
+}
+
+export function jwtData(producer: object): Uint8Array {
+  const payload = producerPayload(producer)
+  for (const claim of ['iat', 'nbf', 'exp'] as const) {
+    const value = payload[claim]
+    if (typeof value === 'number' && !Number.isFinite(value)) {
+      throw new TypeError(`"${claim}" claim must be a finite number`)
+    }
+  }
+
+  return encoder.encode(JSON.stringify(payload))
+}
+
+export function jwtClaim(producer: object, claim: 'iss' | 'sub' | 'aud'): unknown {
+  return producerPayload(producer)[claim]
+}
+
+export class JWTClaimsBuilder {
+  constructor(payload: types.JWTPayload = {}) {
     if (!isObject(payload)) {
       throw new TypeError('JWT Claims Set MUST be an object')
     }
-    this.#payload = structuredClone(payload)
+    ;(producerPayloads ||= new WeakMap()).set(this, structuredClone(payload))
   }
 
-  data(): Uint8Array {
-    return encoder.encode(JSON.stringify(this.#payload))
+  setIssuer(value: string): this {
+    validateStringClaim('iss', value)
+    producerPayload(this).iss = value
+    return this
   }
 
-  get iss(): string | undefined {
-    return this.#payload.iss
+  setSubject(value: string): this {
+    validateStringClaim('sub', value)
+    producerPayload(this).sub = value
+    return this
   }
 
-  set iss(value: string) {
-    this.#payload.iss = value
+  setAudience(value: string | string[]): this {
+    validateAudienceClaim(value)
+    producerPayload(this).aud = value
+    return this
   }
 
-  get sub(): string | undefined {
-    return this.#payload.sub
+  setJti(value: string): this {
+    validateStringClaim('jti', value)
+    producerPayload(this).jti = value
+    return this
   }
 
-  set sub(value: string) {
-    this.#payload.sub = value
+  setNotBefore(value: number | string | Date): this {
+    producerPayload(this).nbf = numericDate(value, 'setNotBefore')
+    return this
   }
 
-  get aud(): string | string[] | undefined {
-    return this.#payload.aud
+  setExpirationTime(value: number | string | Date): this {
+    producerPayload(this).exp = numericDate(value, 'setExpirationTime')
+    return this
   }
 
-  set aud(value: string | string[]) {
-    this.#payload.aud = value
-  }
-
-  set jti(value: string) {
-    this.#payload.jti = value
-  }
-
-  set nbf(value: number | string | Date) {
-    this.#payload.nbf = numericDate(value, 'setNotBefore')
-  }
-
-  set exp(value: number | string | Date) {
-    this.#payload.exp = numericDate(value, 'setExpirationTime')
-  }
-
-  set iat(value: number | string | Date | undefined) {
+  setIssuedAt(value?: number | string | Date): this {
+    const payload = producerPayload(this)
     if (value === undefined) {
-      this.#payload.iat = epoch(new Date())
+      payload.iat = epoch(new Date())
     } else if (typeof value === 'string') {
-      this.#payload.iat = validateInput('setIssuedAt', epoch(new Date()) + secs(value))
+      payload.iat = validateInput('setIssuedAt', epoch(new Date()) + secs(value))
     } else {
-      this.#payload.iat = numericDate(value, 'setIssuedAt')
+      payload.iat = numericDate(value, 'setIssuedAt')
     }
+    return this
   }
 }
