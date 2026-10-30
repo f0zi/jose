@@ -4,7 +4,7 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-The SignJWT class is used to build and sign Compact JWS formatted JSON Web Tokens.
+Produces JWTs in JWS Compact Serialization using a digital signature or MAC.
 
 This class is exported (as a named export) from the main `'jose'` module entry point as well as
 from its subpath export `'jose/jwt/sign'`.
@@ -30,7 +30,7 @@ const jwt = await new jose.SignJWT({ 'urn:example:claim': true })
 console.log(jwt)
 ```
 
-Usage with a private PKCS#8 encoded RSA key
+Usage with a private PKCS #8 encoded RSA key
 
 ```js
 const alg = 'RS256'
@@ -109,13 +109,11 @@ console.log(jwt)
 
 ▸ **new SignJWT**(`payload?`): `SignJWT`
 
-SignJWT constructor
-
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `payload?` | [`JWTPayload`](../../../types/interfaces/JWTPayload.md) | The JWT Claims Set object. Defaults to an empty object. |
+| `payload?` | [`JWTPayload`](../../../types/interfaces/JWTPayload.md) | Initial JWT Claims Set. Defaults to an empty object. |
 
 #### Returns
 
@@ -127,7 +125,7 @@ SignJWT constructor
 
 ▸ **setAudience**(`audience`): `this`
 
-Set the "aud" (Audience) Claim.
+Set the "aud" (Audience) Claim (RFC 7519, Section 4.1.3).
 
 #### Parameters
 
@@ -145,10 +143,8 @@ Set the "aud" (Audience) Claim.
 
 ▸ **setExpirationTime**(`input`): `this`
 
-Set the "exp" (Expiration Time) Claim. A `number` is used directly, a `Date` is converted to a
-Unix timestamp, and a `string` is parsed as a time span relative to the current Unix timestamp.
-String units may be seconds, minutes, hours, days, weeks, or years; months are unsupported and
-a year is 365.25 days. A leading `-` or trailing `"ago"` subtracts the time span.
+Set the "exp" (Expiration Time) Claim. Accepts a NumericDate value (seconds since the Unix
+epoch), a Date, or a duration relative to now using the same formats as [setNotBefore](../../../types/interfaces/ProduceJWT.md#setnotbefore).
 
 Format used for time span should be a number followed by a unit, such as "5 minutes" or "1
 day".
@@ -163,11 +159,15 @@ A "from now" suffix can be used for readability when adding to the current Unix 
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `input` | `string` \| `number` \| [`Date`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Date) | "exp" (Expiration Time) Claim value to set on the JWT Claims Set. |
+| `input` | `string` \| `number` \| [`Date`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Date) | "exp" (Expiration Time) Claim value as a timestamp, Date, or relative duration. |
 
 #### Returns
 
 `this`
+
+#### See
+
+[RFC 7519, Section 4.1.4](https://www.rfc-editor.org/info/rfc7519/#section-4.1.4)
 
 ***
 
@@ -175,11 +175,9 @@ A "from now" suffix can be used for readability when adding to the current Unix 
 
 ▸ **setIssuedAt**(`input?`): `this`
 
-Set the "iat" (Issued At) Claim. With no argument the current Unix timestamp is used. A
-`number` is used directly, a `Date` is converted to a Unix timestamp, and a `string` is parsed
-as a time span relative to the current Unix timestamp. String units may be seconds, minutes,
-hours, days, weeks, or years; months are unsupported and a year is 365.25 days. A leading `-`
-or trailing `"ago"` subtracts the time span.
+Set the "iat" (Issued At) Claim. Defaults to the current Unix timestamp in seconds. Accepts a
+Unix timestamp in seconds, a Date, or a duration relative to now using the same formats as
+[setNotBefore](../../../types/interfaces/ProduceJWT.md#setnotbefore).
 
 Format used for time span should be a number followed by a unit, such as "5 minutes" or "1
 day".
@@ -194,11 +192,15 @@ A "from now" suffix can be used for readability when adding to the current Unix 
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `input?` | `string` \| `number` \| [`Date`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Date) | "iat" (Issued At) Claim value to set on the JWT Claims Set. |
+| `input?` | `string` \| `number` \| [`Date`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Date) | "iat" (Issued At) Claim value as a timestamp, Date, or relative duration. |
 
 #### Returns
 
 `this`
+
+#### See
+
+[RFC 7519, Section 4.1.6](https://www.rfc-editor.org/info/rfc7519/#section-4.1.6)
 
 ***
 
@@ -206,7 +208,7 @@ A "from now" suffix can be used for readability when adding to the current Unix 
 
 ▸ **setIssuer**(`issuer`): `this`
 
-Set the "iss" (Issuer) Claim.
+Set the "iss" (Issuer) Claim (RFC 7519, Section 4.1.1).
 
 #### Parameters
 
@@ -224,7 +226,7 @@ Set the "iss" (Issuer) Claim.
 
 ▸ **setJti**(`jwtId`): `this`
 
-Set the "jti" (JWT ID) Claim.
+Set the "jti" (JWT ID) Claim (RFC 7519, Section 4.1.7).
 
 #### Parameters
 
@@ -242,10 +244,10 @@ Set the "jti" (JWT ID) Claim.
 
 ▸ **setNotBefore**(`input`): `this`
 
-Set the "nbf" (Not Before) Claim. A `number` is used directly, a `Date` is converted to a Unix
-timestamp, and a `string` is parsed as a time span relative to the current Unix timestamp.
-String units may be seconds, minutes, hours, days, weeks, or years; months are unsupported and
-a year is 365.25 days. A leading `-` or trailing `"ago"` subtracts the time span.
+Set the "nbf" (Not Before) Claim. Numbers are NumericDate values (seconds since the Unix
+epoch); Dates are converted to seconds. Strings are relative to now, using seconds, minutes,
+hours, days, weeks, or years (365.25 days; no months). Prefix `-` or suffix `ago` subtracts the
+duration.
 
 Format used for time span should be a number followed by a unit, such as "5 minutes" or "1
 day".
@@ -260,11 +262,15 @@ A "from now" suffix can be used for readability when adding to the current Unix 
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `input` | `string` \| `number` \| [`Date`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Date) | "nbf" (Not Before) Claim value to set on the JWT Claims Set. |
+| `input` | `string` \| `number` \| [`Date`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Date) | "nbf" (Not Before) Claim value as a timestamp, Date, or relative duration. |
 
 #### Returns
 
 `this`
+
+#### See
+
+[RFC 7519, Section 4.1.5](https://www.rfc-editor.org/info/rfc7519/#section-4.1.5)
 
 ***
 
@@ -272,7 +278,7 @@ A "from now" suffix can be used for readability when adding to the current Unix 
 
 ▸ **setProtectedHeader**(`protectedHeader`): `this`
 
-Sets the JWS Protected Header on the SignJWT object.
+Sets the JWS Protected Header. May only be called once.
 
 #### Parameters
 
@@ -290,7 +296,7 @@ Sets the JWS Protected Header on the SignJWT object.
 
 ▸ **setSubject**(`subject`): `this`
 
-Set the "sub" (Subject) Claim.
+Set the "sub" (Subject) Claim (RFC 7519, Section 4.1.2).
 
 #### Parameters
 
@@ -314,7 +320,7 @@ Signs and returns the JWT.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `key` | [`KeyInput`](../../../types/type-aliases/KeyInput.md) | Private Key or Secret to sign the JWT with. See [Algorithm Key Requirements](https://github.com/panva/jose/issues/210#jws-alg). |
+| `key` | [`KeyInput`](../../../types/type-aliases/KeyInput.md) | Private key or shared secret to sign the JWT with. See [Algorithm Key Requirements](https://github.com/panva/jose/issues/210#jws-alg). |
 | `options?` | [`SignOptions`](../../../types/interfaces/SignOptions.md) | JWT Sign options. |
 
 #### Returns

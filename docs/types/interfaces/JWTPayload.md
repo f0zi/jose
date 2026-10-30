@@ -4,13 +4,13 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-Recognized JWT Claims Set members, any other members may also be present.
+Recognized JWT Claims Set members; additional members may also be present.
 
 ## Indexable
 
 > \[`propName`: `string`\]: `unknown`
 
-Any other JWT Claim Set member.
+Any other JWT Claims Set member.
 
 ## Properties
 
@@ -18,7 +18,7 @@ Any other JWT Claim Set member.
 
 • `optional` **aud?**: `string` \| `string`[]
 
-JWT Audience
+"aud" (Audience) Claim.
 
 #### See
 
@@ -30,7 +30,7 @@ JWT Audience
 
 • `optional` **exp?**: `number`
 
-JWT Expiration Time
+"exp" (Expiration Time) Claim, expressed as a NumericDate (seconds since the Unix epoch).
 
 #### See
 
@@ -42,7 +42,7 @@ JWT Expiration Time
 
 • `optional` **iat?**: `number`
 
-JWT Issued At
+"iat" (Issued At) Claim, expressed as a NumericDate (seconds since the Unix epoch).
 
 #### See
 
@@ -54,7 +54,7 @@ JWT Issued At
 
 • `optional` **iss?**: `string`
 
-JWT Issuer
+"iss" (Issuer) Claim.
 
 #### See
 
@@ -66,7 +66,7 @@ JWT Issuer
 
 • `optional` **jti?**: `string`
 
-JWT ID
+"jti" (JWT ID) Claim.
 
 #### See
 
@@ -78,7 +78,7 @@ JWT ID
 
 • `optional` **nbf?**: `number`
 
-JWT Not Before
+"nbf" (Not Before) Claim, expressed as a NumericDate (seconds since the Unix epoch).
 
 #### See
 
@@ -90,7 +90,7 @@ JWT Not Before
 
 • `optional` **sub?**: `string`
 
-JWT Subject
+"sub" (Subject) Claim.
 
 #### See
 

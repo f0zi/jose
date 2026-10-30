@@ -1,11 +1,15 @@
 # util/decode\_protected\_header
 
-JOSE Protected Header Decoding (JWE, JWS, all serialization syntaxes)
+JWE and JWS Protected Header Decoding (JWE, JWS, all serialization syntaxes)
 
 ## Type Aliases
 
-- [ProtectedHeaderParameters](type-aliases/ProtectedHeaderParameters.md)
+| Type Alias | Description |
+| ------ | ------ |
+| [ProtectedHeaderParameters](type-aliases/ProtectedHeaderParameters.md) | JWE and JWS Header Parameters returned by [decodeProtectedHeader](functions/decodeProtectedHeader.md). |
 
 ## Functions
 
-- [decodeProtectedHeader](functions/decodeProtectedHeader.md)
+| Function | Description |
+| ------ | ------ |
+| [decodeProtectedHeader](functions/decodeProtectedHeader.md) | Decodes the Protected Header of a JWE, JWS, or JWT without authenticating the token. |

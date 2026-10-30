@@ -1,5 +1,102 @@
+import type * as types from '../types.d.ts'
 import { JOSENotSupported, JWEInvalid, JWSInvalid } from '../util/errors.js'
-import { isObject } from './type_checks.js'
+import { decode } from '../util/base64url.js'
+import { encode, strictDecoder } from './buffer_utils.js'
+
+export function assertUint8Array(input: unknown, label: string): asserts input is Uint8Array {
+  if (!(input instanceof Uint8Array)) {
+    throw new TypeError(`${label} must be an instance of Uint8Array`)
+  }
+}
+
+export function isObject<T = object>(input: unknown): input is T {
+  if (
+    typeof input !== 'object' ||
+    input === null ||
+    Object.prototype.toString.call(input) !== '[object Object]'
+  ) {
+    return false
+  }
+  const prototype = Object.getPrototypeOf(input)
+  return prototype === null || Object.getPrototypeOf(prototype) === null
+}
+
+// RFC 7517, Section 5: a JWK Set is an object whose "keys" member is an array of JWKs.
+export function isJwkSet(input: unknown): input is types.JSONWebKeySet {
+  return (
+    isObject<types.JSONWebKeySet>(input) &&
+    Array.isArray(input.keys) &&
+    Array.from(input.keys).every(isObject)
+  )
+}
+
+export function isDisjoint(...headers: Array<object | undefined>): boolean {
+  const parameters = new Set<string>()
+  for (const header of headers) {
+    if (!header) continue
+    for (const parameter of Object.keys(header)) {
+      if (parameters.has(parameter)) {
+        return false
+      }
+      parameters.add(parameter)
+    }
+  }
+
+  return true
+}
+
+export function assertNotSet(value: unknown, name: string): void {
+  if (value !== undefined) {
+    throw new TypeError(`${name} can only be called once`)
+  }
+}
+
+export function decodeBase64url(
+  value: string,
+  label: string,
+  ErrorClass: new (message: string, options?: { cause?: unknown }) => Error,
+): Uint8Array {
+  try {
+    return decode(value)
+  } catch (cause) {
+    throw new ErrorClass(`Failed to base64url decode the ${label}`, { cause })
+  }
+}
+
+/**
+ * Encodes the ASCII octets of a token member that is used as-is when recomputing the JWS Signing
+ * Input or the Additional Authenticated Data encryption parameter for a JWE, rather than being
+ * base64url decoded first.
+ */
+export function encodeAsciiMember(
+  value: string,
+  label: string,
+  ErrorClass: new (message: string, options?: { cause?: unknown }) => Error,
+): Uint8Array {
+  try {
+    return encode(value)
+  } catch (cause) {
+    throw new ErrorClass(`The ${label} is not a valid base64url string`, { cause })
+  }
+}
+
+/** Base64url decode, UTF-8 decode, JSON parse, and require a JSON object - in one place. */
+export function parseJoseHeader<T>(
+  encodedProtectedHeader: string,
+  ErrorClass: new (message: string, options?: { cause?: unknown }) => Error,
+  message: string,
+): T {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(strictDecoder.decode(decode(encodedProtectedHeader)))
+  } catch (cause) {
+    throw new ErrorClass(message, { cause })
+  }
+  if (!isObject(parsed)) {
+    throw new ErrorClass(message)
+  }
+  return parsed as T
+}
 
 interface CritCheckHeader {
   b64?: boolean
@@ -21,11 +118,7 @@ export function validateAlgorithms(option: string, algorithms?: string[]): Set<s
     throw new TypeError(`"${option}" option must be an array of strings`)
   }
 
-  if (!algorithms) {
-    return undefined
-  }
-
-  return new Set(algorithms)
+  return algorithms === undefined ? undefined : new Set(algorithms)
 }
 
 /**
@@ -43,6 +136,8 @@ export function validateCritDuplicates(
   }
 }
 
+// RFC 7515, Section 4.1.11; RFC 7516, Section 4.1.13: protected, nonempty crit,
+// understood extensions, and presence of each listed Header Parameter.
 export function validateCrit(
   Err: typeof JWEInvalid | typeof JWSInvalid,
   recognizedDefault: Record<string, boolean>,
@@ -95,6 +190,8 @@ export function validateCrit(
   return protectedHeader.crit
 }
 
+// RFC 7797, Sections 3 and 6: b64 defaults to true; an explicit value is protected
+// and listed in crit. Recognition of an extension does not validate its application semantics.
 export function validateB64(
   protectedHeader: CritCheckHeader | undefined,
   extensions: string[],

@@ -12,8 +12,8 @@ Recognized JWE Key Management-related Header Parameters.
 
 • `optional` **apu?**: [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array)
 
-ECDH-ES "apu" (Agreement PartyUInfo). This will be used as a JOSE Header Parameter and will be
-used in ECDH's ConcatKDF.
+Raw Agreement PartyUInfo bytes; base64url-encoded as the "apu" Header Parameter (RFC 7518,
+Section 4.6.1.2).
 
 ***
 
@@ -21,8 +21,8 @@ used in ECDH's ConcatKDF.
 
 • `optional` **apv?**: [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array)
 
-ECDH-ES "apv" (Agreement PartyVInfo). This will be used as a JOSE Header Parameter and will be
-used in ECDH's ConcatKDF.
+Raw Agreement PartyVInfo bytes; base64url-encoded as the "apv" Header Parameter (RFC 7518,
+Section 4.6.1.3).
 
 ***
 
@@ -30,10 +30,12 @@ used in ECDH's ConcatKDF.
 
 • `optional` **epk?**: [`CryptoKey`](https://developer.mozilla.org/docs/Web/API/CryptoKey) \| [`KeyObject`](KeyObject.md)
 
+Ephemeral private key input. The resulting "epk" (Ephemeral Public Key) Header Parameter
+contains only the public key (RFC 7518, Section 4.6.1.1).
+
 #### Deprecated
 
-You should not use this parameter. It is only intended for testing and vector
-  validation purposes.
+For testing and vector validation only.
 
 ***
 
@@ -41,10 +43,11 @@ You should not use this parameter. It is only intended for testing and vector
 
 • `optional` **iv?**: [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array)
 
+Raw Initialization Vector bytes for AES GCM Key Encryption (RFC 7518, Section 4.7.1.1).
+
 #### Deprecated
 
-You should not use this parameter. It is only intended for testing and vector
-  validation purposes.
+For testing and vector validation only.
 
 ***
 
@@ -52,8 +55,8 @@ You should not use this parameter. It is only intended for testing and vector
 
 • `optional` **p2c?**: `number`
 
-PBES2 "p2c" (PBES2 Count). This will be used as a JOSE Header Parameter and as the PBKDF2
-iteration count.
+"p2c" (PBES2 Count) Header Parameter: positive PBKDF2 iteration count (RFC 7518, Section
+4.8.1.2).
 
 ***
 
@@ -61,7 +64,8 @@ iteration count.
 
 • `optional` **p2s?**: [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array)
 
+Raw PBES2 Salt Input bytes (RFC 7518, Section 4.8.1.1).
+
 #### Deprecated
 
-You should not use this parameter. It is only intended for testing and vector
-  validation purposes.
+For testing and vector validation only.

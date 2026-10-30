@@ -4,7 +4,7 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-A generic Error that all other JOSE specific Error subclasses extend.
+Base class for JOSE errors.
 
 ## Example
 
@@ -22,5 +22,4 @@ if (err instanceof jose.errors.JOSEError) {
 
 • **code**: `string` = `'ERR_JOSE_GENERIC'`
 
-A unique error code for JOSEError. Each subclass sets its own; see [AnyJOSEError](../type-aliases/AnyJOSEError.md)
-to switch over them as a discriminated union.
+Stable code identifying the error class. Use [AnyJOSEError](../type-aliases/AnyJOSEError.md) to narrow subclasses by code.

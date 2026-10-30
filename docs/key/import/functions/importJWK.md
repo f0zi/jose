@@ -6,16 +6,15 @@ Support from the community to continue maintaining and improving this module is 
 
 ▸ **importJWK**\<`JWKType`\>(`jwk`, `alg?`, `options?`): [`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<[`ImportedJWK`](../type-aliases/ImportedJWK.md)\<`JWKType`\>\>
 
-Imports a JWK to a [CryptoKey](https://developer.mozilla.org/docs/Web/API/CryptoKey). Either the JWK "alg" (Algorithm) Parameter, or the optional
-"alg" argument, must be present for asymmetric JSON Web Key imports.
+Imports a JWK as a [CryptoKey](https://developer.mozilla.org/docs/Web/API/CryptoKey) or [Uint8Array](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array). Asymmetric imports require either the
+"alg" argument or JWK "alg" parameter. For AKP keys, the JWK "alg" parameter is required and must
+match the argument when provided.
 
 > [!NOTE]\
-> The JSON Web Key parameters "key_ops" and "ext" are also used in the [CryptoKey](https://developer.mozilla.org/docs/Web/API/CryptoKey) import
-> process.
+> CryptoKey imports honor the JWK "key_ops" and "ext" parameters.
 
 > [!NOTE]\
-> Symmetric JSON Web Keys (i.e. `kty: "oct"`) yield back an [Uint8Array](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) instead of a
-> [CryptoKey](https://developer.mozilla.org/docs/Web/API/CryptoKey).
+> Symmetric JWKs (`kty: "oct"`) return [Uint8Array](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) instead of CryptoKey.
 
 This function is exported (as a named export) from the main `'jose'` module entry point as well
 as from its subpath export `'jose/key/import'`.

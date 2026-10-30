@@ -4,7 +4,7 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-See [jwksCache](../variables/jwksCache.md).
+Shape of an externally persisted remote JWKS cache.
 
 ## Properties
 
@@ -20,4 +20,4 @@ Current cached JSON Web Key Set
 
 • **uat**: `number`
 
-Last updated at timestamp (milliseconds since epoch)
+Last successful fetch, in milliseconds since Unix epoch.

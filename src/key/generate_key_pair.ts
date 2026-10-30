@@ -5,14 +5,13 @@
  */
 
 import { JOSENotSupported } from '../util/errors.js'
-import { validateExtractableOption } from '../lib/key_options.js'
+import { validateExtractableOption } from '../lib/key.js'
 import { keyAlgorithm, unsupportedAlg, algArgument } from '../lib/key_algorithm.js'
 
 import type * as types from '../types.d.ts'
 
 /**
- * JWA Algorithm Identifiers that {@link generateKeyPair} is able to generate a key pair for, subject
- * to runtime support.
+ * Algorithms supported by {@link generateKeyPair}, subject to runtime support.
  *
  * @ignore
  */
@@ -41,31 +40,27 @@ export type GenerateKeyPairAlgorithm =
   | 'ECDH-ES+A256KW'
   | (string & {})
 
-/** Asymmetric key pair generation function result. */
+/** Generated asymmetric key pair. */
 export interface GenerateKeyPairResult {
-  /** The generated Private Key. */
   privateKey: types.CryptoKey
 
-  /** Public Key corresponding to the generated Private Key. */
   publicKey: types.CryptoKey
 }
 
-/** Asymmetric key pair generation function options. */
+/** Asymmetric key pair generation options. */
 export interface GenerateKeyPairOptions {
   /**
-   * The EC "crv" (Curve) or OKP "crv" (Subtype of Key Pair) value to generate. The curve must be
-   * both supported on the runtime as well as applicable for the given JWA algorithm identifier.
+   * EC curve or OKP key subtype. Must be supported by the algorithm and runtime. ECDH-ES defaults
+   * to P-256.
    */
   crv?: string
 
-  /**
-   * A hint for RSA algorithms to generate an RSA key of a given `modulusLength` (Key size in bits).
-   * JOSE requires 2048 bits or larger. Default is 2048.
-   */
+  /** RSA modulus length in bits. Must be an integer of at least 2048; defaults to 2048. */
   modulusLength?: number
 
   /**
-   * The value to use as {@link !SubtleCrypto.generateKey} `extractable` argument. Default is false.
+   * Whether the private key is extractable. Defaults to false; the public key is always
+   * extractable.
    *
    * @example
    *
@@ -80,6 +75,8 @@ export interface GenerateKeyPairOptions {
   extractable?: boolean
 }
 
+// RFC 7518, Sections 3.3, 3.5, and 4.3: RSA keys must be at least 2048 bits.
+// Using 2048 bits by default is library policy.
 function getModulusLengthOption(options?: GenerateKeyPairOptions) {
   const modulusLength = options?.modulusLength ?? 2048
   if (
@@ -95,12 +92,13 @@ function getModulusLengthOption(options?: GenerateKeyPairOptions) {
 }
 
 /**
- * Generates a private and a public key for a given JWA algorithm identifier. This can only generate
- * asymmetric key pairs. For symmetric secrets use the `generateSecret` function.
+ * Generates an asymmetric key pair for a JWA algorithm identifier.
+ *
+ * For symmetric secrets use the {@link key/generate_secret.generateSecret generateSecret} function.
  *
  * > [!NOTE]\
- * > The `privateKey` is generated with `extractable` set to `false` by default. See
- * > {@link GenerateKeyPairOptions.extractable} to generate an extractable `privateKey`.
+ * > Private keys are not extractable by default. Set {@link GenerateKeyPairOptions.extractable} to
+ * > export them; public keys are always extractable.
  *
  * This function is exported (as a named export) from the main `'jose'` module entry point as well
  * as from its subpath export `'jose/key/generate/keypair'`.
@@ -133,20 +131,12 @@ export async function generateKeyPair(
   if (entry.resolve) {
     // ECDH-ES takes its curve from the option rather than from the identifier.
     const crv = options?.crv ?? 'P-256'
-    switch (crv) {
-      case 'P-256':
-      case 'P-384':
-      case 'P-521':
-        algorithm = { name: 'ECDH', namedCurve: crv }
-        break
-      case 'X25519':
-        algorithm = { name: 'X25519' }
-        break
-      default:
-        throw new JOSENotSupported(
-          'Invalid or unsupported crv option provided, supported values are P-256, P-384, P-521, and X25519',
-        )
+    if (!['P-256', 'P-384', 'P-521', 'X25519'].includes(crv)) {
+      throw new JOSENotSupported(
+        'Invalid or unsupported crv option provided, supported values are P-256, P-384, P-521, and X25519',
+      )
     }
+    algorithm = entry.resolve({ crv })
   } else {
     if (entry.crv !== undefined && options?.crv !== undefined && options.crv !== entry.crv) {
       throw new JOSENotSupported(

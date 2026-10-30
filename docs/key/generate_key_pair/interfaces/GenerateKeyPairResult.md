@@ -4,7 +4,7 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-Asymmetric key pair generation function result.
+Generated asymmetric key pair.
 
 ## Properties
 
@@ -12,12 +12,8 @@ Asymmetric key pair generation function result.
 
 • **privateKey**: [`CryptoKey`](https://developer.mozilla.org/docs/Web/API/CryptoKey)
 
-The generated Private Key.
-
 ***
 
 ### publicKey
 
 • **publicKey**: [`CryptoKey`](https://developer.mozilla.org/docs/Web/API/CryptoKey)
-
-Public Key corresponding to the generated Private Key.

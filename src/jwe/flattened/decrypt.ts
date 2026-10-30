@@ -2,23 +2,23 @@
  * Decrypting JSON Web Encryption (JWE) in Flattened JSON Serialization
  *
  * @module
+ *
+ * @see {@link https://www.rfc-editor.org/info/rfc7516/#section-7.2.2 RFC 7516, Section 7.2.2}
  */
 
 import type * as types from '../../types.d.ts'
 import { JWEInvalid } from '../../util/errors.js'
-import { isObject } from '../../lib/type_checks.js'
+import { isObject } from '../../lib/validate.js'
 import {
   prepareDecrypt,
   decryptJWE,
-  decryptResult,
   checkRecipient,
   snapshotSharedJWE,
   snapshotRecipientJWE,
 } from '../../lib/jwe_decrypt.js'
 
 /**
- * Interface for Flattened JWE Decryption dynamic key resolution. No token components have been
- * verified at the time of this function call.
+ * Resolves a key for Flattened JWE decryption from unverified headers and token data.
  *
  * @typeParam KeyType Type definition of the keys the function resolves. Narrowing it is what lets
  *   {@link types.ResolvedKey.key ResolvedKey.key} be inferred at the call site.
@@ -32,7 +32,7 @@ export interface FlattenedDecryptGetKey<
 > {}
 
 /**
- * Decrypts a Flattened JWE.
+ * Authenticates and decrypts a flattened JWE JSON Serialization.
  *
  * This function is exported (as a named export) from the main `'jose'` module entry point as well
  * as from its subpath export `'jose/jwe/flattened/decrypt'`.
@@ -60,7 +60,7 @@ export interface FlattenedDecryptGetKey<
  * ```
  *
  * @param jwe Flattened JWE.
- * @param key Private Key or Secret to decrypt the JWE with. See
+ * @param key Private key or shared secret. See
  *   {@link https://github.com/panva/jose/issues/210#jwe-alg Algorithm Key Requirements}.
  * @param options JWE Decryption options.
  */
@@ -70,12 +70,11 @@ export function flattenedDecrypt(
   options?: types.DecryptOptions,
 ): Promise<types.FlattenedDecryptResult>
 /**
- * Decrypts a Flattened JWE, resolving the key dynamically. The result additionally carries the
- * {@link types.ResolvedKey.key resolved key}.
+ * Authenticates and decrypts a flattened JWE JSON Serialization with a dynamically resolved key,
+ * included in the result.
  *
  * @param jwe Flattened JWE.
- * @param getKey Function resolving Private Key or Secret to decrypt the JWE with. See
- *   {@link https://github.com/panva/jose/issues/210#jwe-alg Algorithm Key Requirements}.
+ * @param getKey Resolves a private key or shared secret from unverified token data.
  * @param options JWE Decryption options.
  */
 export function flattenedDecrypt<
@@ -86,13 +85,11 @@ export function flattenedDecrypt<
   options?: types.DecryptOptions,
 ): Promise<types.FlattenedDecryptResult & types.ResolvedKey<KeyType>>
 /**
- * Accepts either form of the `key` argument. Use this overload when forwarding a value that may be
- * either a key or a key resolution function; `key` is present on the result only when a resolution
- * function was used.
+ * Authenticates and decrypts a flattened JWE JSON Serialization with a key or key resolver. The
+ * result includes `key` only when a resolver is used.
  *
  * @param jwe Flattened JWE.
- * @param key Private Key or Secret, or a function resolving one, to decrypt the JWE with. See
- *   {@link https://github.com/panva/jose/issues/210#jwe-alg Algorithm Key Requirements}.
+ * @param key Private key or shared secret, or a function resolving one.
  * @param options JWE Decryption options.
  */
 export function flattenedDecrypt(
@@ -115,5 +112,5 @@ export async function flattenedDecrypt(
   const snapshot: types.FlattenedJWE = { ...shared, ...recipient }
   checkRecipient(snapshot)
 
-  return decryptResult(snapshot, await decryptJWE(snapshot, prepareDecrypt(options), key))
+  return decryptJWE(snapshot, prepareDecrypt(options), key)
 }

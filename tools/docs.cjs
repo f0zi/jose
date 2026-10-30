@@ -27,10 +27,16 @@ for (const entry of readdirSync('docs')) {
   rmSync(`docs/${entry}`, { recursive: true, force: true })
 }
 
-execSync('npm exec --no -- patch-package', opts)
-execSync(`npm run docs:generate -- --gitRevision v${version}`, opts)
+try {
+  execSync('npm exec --no -- patch-package', opts)
+  execSync(`npm run docs:generate -- --gitRevision v${version}`, opts)
+} finally {
+  writeFileSync('docs/README.md', readme)
+}
 
 globSync('docs/**/*.md').forEach((file) => {
+  if (file === 'docs/README.md') return
+
   const content = readFileSync(file, 'utf-8')
     .replaceAll('\\<`ArrayBufferLike`\\>', '')
     .replace(new RegExp(`\`(?:${openUnions.join('|')})\``, 'g'), '`string`')
@@ -63,7 +69,11 @@ globSync('docs/**/*.md').forEach((file) => {
       '',
     )
 
+  // Alerts do not render correctly inside pipe tables. Public declarations must introduce them
+  // with a concise summary paragraph for TypeDoc to use in the index instead.
+  if (/^\| .+ \| > \[![A-Z]+\]/m.test(content)) {
+    throw new Error(`unrenderable alert in index table in ${file}`)
+  }
+
   writeFileSync(file, content, 'utf-8')
 })
-
-writeFileSync('docs/README.md', readme)

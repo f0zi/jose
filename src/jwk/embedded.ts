@@ -5,18 +5,15 @@
  */
 
 import type * as types from '../types.d.ts'
-import { jwkToKey } from '../lib/jwk_to_key.js'
+import { jwkToKey, normalizeJwk } from '../lib/key.js'
 import { jwsAlgorithm } from '../lib/jws_algorithms.js'
-import { isObject } from '../lib/type_checks.js'
+import { isObject } from '../lib/validate.js'
 import { JWSInvalid } from '../util/errors.js'
-import { normalizeJwk } from '../lib/jwk_metadata.js'
 
 /**
- * EmbeddedJWK is an implementation of a {@link types.GetKeyFunction GetKeyFunction} intended to be
- * used with the JWS/JWT verify operations whenever you need to opt-in to verify signatures with a
- * public key embedded in the token's "jwk" (JSON Web Key) Header Parameter. It is recommended to
- * combine this with the verify function's `algorithms` option to define accepted JWS "alg"
- * (Algorithm) Header Parameter values.
+ * Resolves a verification key from an embedded "jwk" (JSON Web Key) Header Parameter. This key
+ * resolver opts JWS and JWT verification into trusting a public key supplied by the token. Use the
+ * verification function's `algorithms` option to restrict accepted algorithms.
  *
  * This function is exported (as a named export) from the main `'jose'` module entry point as well
  * as from its subpath export `'jose/jwk/embedded'`.
@@ -61,14 +58,16 @@ export async function EmbeddedJWK(
   }
 
   const entry = jwsAlgorithm(joseHeader.alg)
+  // RFC 7517, Sections 4.2 and 4.4: respect declared key use and algorithm.
   if (jwk.use !== undefined && jwk.use !== 'sig') {
     throw new JWSInvalid('Invalid Embedded JWK, its "use" must be "sig" when present')
   }
   if (jwk.alg !== undefined && jwk.alg !== entry.alg) {
     throw new JWSInvalid(`Invalid Embedded JWK, its "alg" must be "${entry.alg}" when present`)
   }
-  const key = await jwkToKey(entry, { ...jwk, ext: true })
+  const key = await jwkToKey(entry, jwk, true)
 
+  // RFC 7515, Section 4.1.3: the jwk Header Parameter represents a public key.
   if (key.type !== 'public') {
     throw new JWSInvalid('"jwk" (JSON Web Key) Header Parameter must be a public key')
   }

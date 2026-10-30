@@ -2,25 +2,26 @@
  * Decrypting JSON Web Encryption (JWE) in General JSON Serialization
  *
  * @module
+ *
+ * @see {@link https://www.rfc-editor.org/info/rfc7516/#section-7.2.1 RFC 7516, Section 7.2.1}
  */
 
 import {
   prepareDecrypt,
   shareJWE,
-  decryptRecipient,
-  decryptResult,
+  decryptJWE,
   checkRecipient,
   snapshotSharedJWE,
   snapshotRecipientJWE,
 } from '../../lib/jwe_decrypt.js'
 import type { DecryptShared, SharedJWE } from '../../lib/jwe_decrypt.js'
 import { JWEDecryptionFailed, JWEInvalid } from '../../util/errors.js'
+import { isObject } from '../../lib/validate.js'
+import { JWE, isJWECEKTransport } from '../../lib/jwe_algorithms.js'
 import type * as types from '../../types.d.ts'
-import { isObject } from '../../lib/type_checks.js'
 
 /**
- * Interface for General JWE Decryption dynamic key resolution. No token components have been
- * verified at the time of this function call.
+ * Resolves a key for General JWE decryption from unverified headers and token data.
  *
  * @typeParam KeyType Type definition of the keys the function resolves. Narrowing it is what lets
  *   {@link types.ResolvedKey.key ResolvedKey.key} be inferred at the call site.
@@ -34,17 +35,15 @@ export interface GeneralDecryptGetKey<
 > {}
 
 /**
- * Decrypts a General JWE.
+ * Authenticates and decrypts a general JWE JSON Serialization.
  *
  * This function is exported (as a named export) from the main `'jose'` module entry point as well
  * as from its subpath export `'jose/jwe/general/decrypt'`.
  *
  * > [!NOTE]\
- * > The function iterates over the `recipients` array in the General JWE and returns the decryption
- * > result of the first recipient entry that can be successfully decrypted. The result only contains
- * > the plaintext and headers of that successfully decrypted recipient entry. Other recipient entries
- * > in the General JWE are not validated, and their headers are not included in the returned result.
- * > Recipients of a General JWE should only rely on the returned (decrypted) data.
+ * > Returns plaintext and headers from the first recipient that decrypts successfully. Other
+ * > recipients may be inspected to enforce serialization rules, but their headers are not included in
+ * > the result. Rely only on the returned data.
  *
  * @example
  *
@@ -73,7 +72,7 @@ export interface GeneralDecryptGetKey<
  * ```
  *
  * @param jwe General JWE.
- * @param key Private Key or Secret to decrypt the JWE with. See
+ * @param key Private key or shared secret. See
  *   {@link https://github.com/panva/jose/issues/210#jwe-alg Algorithm Key Requirements}.
  * @param options JWE Decryption options.
  */
@@ -83,12 +82,11 @@ export function generalDecrypt(
   options?: types.DecryptOptions,
 ): Promise<types.GeneralDecryptResult>
 /**
- * Decrypts a General JWE, resolving the key dynamically. The result additionally carries the
- * {@link types.ResolvedKey.key resolved key}.
+ * Authenticates and decrypts a general JWE JSON Serialization with a dynamically resolved key,
+ * included in the result.
  *
  * @param jwe General JWE.
- * @param getKey Function resolving Private Key or Secret to decrypt the JWE with. See
- *   {@link https://github.com/panva/jose/issues/210#jwe-alg Algorithm Key Requirements}.
+ * @param getKey Resolves a private key or shared secret from unverified token data.
  * @param options JWE Decryption options.
  */
 export function generalDecrypt<
@@ -99,13 +97,11 @@ export function generalDecrypt<
   options?: types.DecryptOptions,
 ): Promise<types.GeneralDecryptResult & types.ResolvedKey<KeyType>>
 /**
- * Accepts either form of the `key` argument. Use this overload when forwarding a value that may be
- * either a key or a key resolution function; `key` is present on the result only when a resolution
- * function was used.
+ * Authenticates and decrypts a general JWE JSON Serialization with a key or key resolver. The
+ * result includes `key` only when a resolver is used.
  *
  * @param jwe General JWE.
- * @param key Private Key or Secret, or a function resolving one, to decrypt the JWE with. See
- *   {@link https://github.com/panva/jose/issues/210#jwe-alg Algorithm Key Requirements}.
+ * @param key Private key or shared secret, or a function resolving one.
  * @param options JWE Decryption options.
  */
 export function generalDecrypt(
@@ -150,23 +146,28 @@ export async function generalDecrypt(
   }
 
   const recipientSnapshots = recipients.map((recipient) => snapshotRecipientJWE(recipient))
-
+  // draft-ietf-jose-hpke-encrypt-22, Section 7.2, step 7: single-recipient modes.
   if (recipients.length > 1) {
+    // A recognized direct mode makes the serialization invalid as a whole. Unknown or otherwise
+    // invalid algorithms remain recipient-local so a successful recipient can still be returned,
+    // as required by General JWE's documented failure-collapsing behavior.
     for (const [, headerAlg] of recipientSnapshots) {
-      // This implementation supports these direct key-management modes for one recipient only.
       const alg = token[0]?.alg ?? headerAlg ?? sharedJwe.unprotected?.alg
-      if (alg === 'dir' || alg === 'ECDH-ES') {
+      const algEntry = typeof alg === 'string' ? JWE[alg] : undefined
+      if (algEntry && !isJWECEKTransport(algEntry)) {
         throw new JWEInvalid(`"${alg}" alg may only have a single recipient`)
       }
     }
   }
 
+  // draft-ietf-jose-hpke-encrypt-22, Section 7.2, step 21: at least one recipient must
+  // succeed. This API returns the first success, which is a library selection policy.
   for (const [recipient] of recipientSnapshots) {
     if (!recipient) continue
     try {
       const flattened: types.FlattenedJWE = { ...sharedJwe, ...recipient }
       checkRecipient(flattened)
-      return decryptResult(flattened, await decryptRecipient(flattened, token, shared, key))
+      return await decryptJWE(flattened, shared, key, token)
     } catch {
       //
     }

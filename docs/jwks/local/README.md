@@ -4,8 +4,12 @@ Verification using a JSON Web Key Set (JWKS) available locally
 
 ## Interfaces
 
-- [LocalJWKSet](interfaces/LocalJWKSet.md)
+| Interface | Description |
+| ------ | ------ |
+| [LocalJWKSet](interfaces/LocalJWKSet.md) | A key resolver created by [createLocalJWKSet](functions/createLocalJWKSet.md). |
 
 ## Functions
 
-- [createLocalJWKSet](functions/createLocalJWKSet.md)
+| Function | Description |
+| ------ | ------ |
+| [createLocalJWKSet](functions/createLocalJWKSet.md) | Creates a resolver for a locally available JSON Web Key Set. Selection uses the header's "alg" (Algorithm) and "kid" (Key ID), and respects the JWK's "use" (Public Key Use) and "key_ops" (Key Operations). Exactly one key must match. |

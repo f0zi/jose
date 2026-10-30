@@ -4,12 +4,10 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-The shape shared by the two errors thrown during JWT Claims Set validation.
+Shared details of JWT claim or header validation failures.
 
-> [!NOTE]\
-> [JWTExpired](../classes/JWTExpired.md) does not extend [JWTClaimValidationFailed](../classes/JWTClaimValidationFailed.md), so `instanceof
-> JWTClaimValidationFailed` is `false` for an expired JWT. Use [JWTClaimValidationError](../type-aliases/JWTClaimValidationError.md) or
-> the [code](../classes/JOSEError.md#code) discriminant to handle both.
+[JWTExpired](../classes/JWTExpired.md) does not extend [JWTClaimValidationFailed](../classes/JWTClaimValidationFailed.md). Use
+[JWTClaimValidationError](../type-aliases/JWTClaimValidationError.md) or the [code](../classes/JOSEError.md#code) discriminant to handle both.
 
 ## Properties
 
@@ -17,7 +15,7 @@ The shape shared by the two errors thrown during JWT Claims Set validation.
 
 • **claim**: `string`
 
-The Claim for which the validation failed.
+Claim or header that failed validation.
 
 ***
 
@@ -25,7 +23,7 @@ The Claim for which the validation failed.
 
 • **payload**: [`JWTPayload`](../../../types/interfaces/JWTPayload.md)
 
-The parsed JWT Claims Set (aka payload).
+The parsed JWT Claims Set; validation of other claims may be incomplete.
 
 ***
 

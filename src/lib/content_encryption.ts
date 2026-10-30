@@ -1,17 +1,16 @@
 import type * as types from '../types.d.ts'
 import { concat, uint64be } from './buffer_utils.js'
-import { checkCryptoKey } from './crypto_key.js'
-import { invalidKeyInput } from './invalid_key_input.js'
+import { rawKey, invalidKeyInput, isCryptoKey } from './key.js'
 import { JWEDecryptionFailed, JWEInvalid } from '../util/errors.js'
 import type { JWEEncryption } from './jwe_algorithms.js'
-import { isCryptoKey } from './is_key_like.js'
 
 // --- CEK ---
 
+// draft-ietf-jose-hpke-encrypt-22, Section 7.1, step 2: random CEK of the required length.
 export const generateCek = (enc: JWEEncryption): Uint8Array =>
   crypto.getRandomValues(new Uint8Array(enc.cekBits >> 3))
 
-function checkCekLength(cek: Uint8Array, expected: number) {
+export function checkCekLength(cek: Uint8Array, expected: number): void {
   const actual = cek.byteLength << 3
   if (actual !== expected) {
     throw new JWEInvalid(
@@ -22,6 +21,7 @@ function checkCekLength(cek: Uint8Array, expected: number) {
 
 // --- IV ---
 
+// draft-ietf-jose-hpke-encrypt-22, Section 7.1, step 10: random IV of the required length.
 export const generateIv = (enc: JWEEncryption): Uint8Array =>
   crypto.getRandomValues(new Uint8Array(enc.ivBits >> 3))
 
@@ -37,40 +37,42 @@ async function cbcKeySetup(
   enc: JWEEncryption,
   cek: Uint8Array | types.CryptoKey,
   usage: 'encrypt' | 'decrypt',
-): Promise<[encKey: CryptoKey, macKey: CryptoKey, keySize: number]> {
+): Promise<[encKey: CryptoKey, macKey: CryptoKey, keyLengthBits: number]> {
   if (!(cek instanceof Uint8Array)) {
     throw new TypeError(invalidKeyInput(cek, 'Uint8Array'))
   }
-  const keySize = enc.cekBits >> 1
+  // RFC 7518, Section 5.2.2.1, step 1: MAC_KEY precedes ENC_KEY in the CEK.
+  const keyLengthBits = enc.cekBits >> 1
   const encKey = await crypto.subtle.importKey(
     'raw',
-    cek.subarray(keySize >> 3) as Uint8Array<ArrayBuffer>,
+    cek.subarray(keyLengthBits >> 3) as Uint8Array<ArrayBuffer>,
     'AES-CBC',
     false,
     [usage],
   )
   const macKey = await crypto.subtle.importKey(
     'raw',
-    cek.subarray(0, keySize >> 3) as Uint8Array<ArrayBuffer>,
+    cek.subarray(0, keyLengthBits >> 3) as Uint8Array<ArrayBuffer>,
     {
-      hash: `SHA-${keySize << 1}`,
+      hash: `SHA-${keyLengthBits << 1}`,
       name: 'HMAC',
     },
     false,
     ['sign'],
   )
-  return [encKey, macKey, keySize]
+  return [encKey, macKey, keyLengthBits]
 }
 
 async function cbcHmacTag(
   macKey: CryptoKey,
   macData: Uint8Array,
-  keySize: number,
+  keyLengthBits: number,
 ): Promise<Uint8Array> {
+  // RFC 7518, Section 5.2.2.1, step 5: truncate the HMAC output to T_LEN octets.
   return new Uint8Array(
     (await crypto.subtle.sign('HMAC', macKey, macData as Uint8Array<ArrayBuffer>)).slice(
       0,
-      keySize >> 3,
+      keyLengthBits >> 3,
     ),
   )
 }
@@ -84,8 +86,9 @@ async function cbcEncrypt(
   iv: Uint8Array,
   aad: Uint8Array,
 ) {
-  const [encKey, macKey, keySize] = await cbcKeySetup(enc, cek, 'encrypt')
+  const [encKey, macKey, keyLengthBits] = await cbcKeySetup(enc, cek, 'encrypt')
 
+  // RFC 7518, Section 5.2.2.1, step 3: AES-CBC encryption with PKCS #7 padding.
   const ciphertext = new Uint8Array(
     await crypto.subtle.encrypt(
       {
@@ -97,8 +100,10 @@ async function cbcEncrypt(
     ),
   )
 
-  const macData = concat(aad, iv, ciphertext, uint64be(aad.length * 8))
-  const tag = await cbcHmacTag(macKey, macData, keySize)
+  // RFC 7518, Section 5.2.2.1, steps 4-5: AL encodes the bit length of AAD.
+  const al = uint64be(aad.length * 8)
+  const macData = concat(aad, iv, ciphertext, al)
+  const tag = await cbcHmacTag(macKey, macData, keyLengthBits)
 
   return { ciphertext, tag, iv }
 }
@@ -119,12 +124,15 @@ async function cbcDecrypt(
   tag: Uint8Array,
   aad: Uint8Array,
 ) {
-  const [encKey, macKey, keySize] = await cbcKeySetup(enc, cek, 'decrypt')
+  const [encKey, macKey, keyLengthBits] = await cbcKeySetup(enc, cek, 'decrypt')
 
-  const macData = concat(aad, iv, ciphertext, uint64be(aad.length * 8))
-  const expectedTag = await cbcHmacTag(macKey, macData, keySize)
+  // RFC 7518, Section 5.2.2.1, steps 4-5: AL encodes the bit length of AAD.
+  const al = uint64be(aad.length * 8)
+  const macData = concat(aad, iv, ciphertext, al)
+  const expectedTag = await cbcHmacTag(macKey, macData, keyLengthBits)
 
   try {
+    // RFC 7518, Section 5.2.2.2, steps 2-3: validate T before decrypting E.
     if (await timingSafeEqual(tag, expectedTag)) {
       return new Uint8Array(
         await crypto.subtle.decrypt(
@@ -135,77 +143,9 @@ async function cbcDecrypt(
       )
     }
   } catch {
-    //
+    // Do not expose authentication or padding failures through cause (RFC 7516, Section 11.4).
   }
   throw new JWEDecryptionFailed()
-}
-
-// --- GCM encrypt/decrypt ---
-
-async function gcmEncrypt(
-  enc: JWEEncryption,
-  plaintext: Uint8Array,
-  cek: Uint8Array | types.CryptoKey,
-  iv: Uint8Array,
-  aad: Uint8Array,
-) {
-  const encKey =
-    cek instanceof Uint8Array
-      ? await crypto.subtle.importKey('raw', cek as Uint8Array<ArrayBuffer>, 'AES-GCM', false, [
-          'encrypt',
-        ])
-      : (checkCryptoKey(cek, enc.subtle, 'encrypt'), cek)
-
-  const encrypted = new Uint8Array(
-    await crypto.subtle.encrypt(
-      {
-        additionalData: aad as Uint8Array<ArrayBuffer>,
-        iv: iv as Uint8Array<ArrayBuffer>,
-        name: 'AES-GCM',
-        tagLength: 128,
-      },
-      encKey,
-      plaintext as Uint8Array<ArrayBuffer>,
-    ),
-  )
-
-  const tag = encrypted.slice(-16)
-  const ciphertext = encrypted.slice(0, -16)
-
-  return { ciphertext, tag, iv }
-}
-
-async function gcmDecrypt(
-  enc: JWEEncryption,
-  cek: Uint8Array | types.CryptoKey,
-  ciphertext: Uint8Array,
-  iv: Uint8Array,
-  tag: Uint8Array,
-  aad: Uint8Array,
-) {
-  const encKey =
-    cek instanceof Uint8Array
-      ? await crypto.subtle.importKey('raw', cek as Uint8Array<ArrayBuffer>, 'AES-GCM', false, [
-          'decrypt',
-        ])
-      : (checkCryptoKey(cek, enc.subtle, 'decrypt'), cek)
-
-  try {
-    return new Uint8Array(
-      await crypto.subtle.decrypt(
-        {
-          additionalData: aad as Uint8Array<ArrayBuffer>,
-          iv: iv as Uint8Array<ArrayBuffer>,
-          name: 'AES-GCM',
-          tagLength: 128,
-        },
-        encKey,
-        concat(ciphertext, tag) as Uint8Array<ArrayBuffer>,
-      ),
-    )
-  } catch {
-    throw new JWEDecryptionFailed()
-  }
 }
 
 // --- Public API ---
@@ -237,9 +177,24 @@ export async function encrypt(
     checkCekLength(cek, enc.cekBits)
   }
 
-  return enc.cbc
-    ? cbcEncrypt(enc, plaintext, cek, iv, aad)
-    : gcmEncrypt(enc, plaintext, cek, iv, aad)
+  if (enc.cbc) return cbcEncrypt(enc, plaintext, cek, iv, aad)
+
+  // RFC 7518, Section 5.3: 96-bit IV and 128-bit Authentication Tag.
+  // Web Crypto returns ciphertext || tag; JWE serializes them separately.
+  const encKey = await rawKey(cek, enc.subtle, 'encrypt')
+  const encrypted = new Uint8Array(
+    await crypto.subtle.encrypt(
+      {
+        additionalData: aad as Uint8Array<ArrayBuffer>,
+        iv: iv as Uint8Array<ArrayBuffer>,
+        name: 'AES-GCM',
+        tagLength: 128,
+      },
+      encKey,
+      plaintext as Uint8Array<ArrayBuffer>,
+    ),
+  )
+  return { ciphertext: encrypted.subarray(0, -16), tag: encrypted.subarray(-16), iv }
 }
 
 export async function decrypt(
@@ -272,7 +227,26 @@ export async function decrypt(
     checkCekLength(cek, enc.cekBits)
   }
 
-  return enc.cbc
-    ? cbcDecrypt(enc, cek, ciphertext, iv, tag, aad)
-    : gcmDecrypt(enc, cek, ciphertext, iv, tag, aad)
+  if (enc.cbc) return cbcDecrypt(enc, cek, ciphertext, iv, tag, aad)
+
+  // RFC 7518, Section 5.3: authenticated AES-GCM decryption.
+  // Concatenate ciphertext || tag for the Web Crypto representation.
+  const encKey = await rawKey(cek, enc.subtle, 'decrypt')
+  try {
+    return new Uint8Array(
+      await crypto.subtle.decrypt(
+        {
+          additionalData: aad as Uint8Array<ArrayBuffer>,
+          iv: iv as Uint8Array<ArrayBuffer>,
+          name: 'AES-GCM',
+          tagLength: 128,
+        },
+        encKey,
+        concat(ciphertext, tag) as Uint8Array<ArrayBuffer>,
+      ),
+    )
+  } catch {
+    // Keep content and CEK recovery failures indistinguishable (RFC 7516, Section 11.4).
+    throw new JWEDecryptionFailed()
+  }
 }

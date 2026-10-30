@@ -2,14 +2,16 @@
  * Signing JSON Web Signature (JWS) in Compact Serialization
  *
  * @module
+ *
+ * @see {@link https://www.rfc-editor.org/info/rfc7515/#section-7.1 RFC 7515, Section 7.1}
  */
 
 import type * as types from '../../types.d.ts'
 import { createCompactSignature } from '../../lib/jws_sign.js'
-import { assertNotSet } from '../../lib/helpers.js'
+import { assertNotSet, assertUint8Array } from '../../lib/validate.js'
 
 /**
- * The CompactSign class is used to build and sign Compact JWS strings.
+ * Produces JWS Compact Serialization using a digital signature or MAC.
  *
  * This class is exported (as a named export) from the main `'jose'` module entry point as well as
  * from its subpath export `'jose/jws/compact/sign'`.
@@ -32,19 +34,17 @@ export class CompactSign {
   #protectedHeader!: types.CompactJWSHeaderParameters
 
   /**
-   * {@link CompactSign} constructor
+   * Creates a signer for JWS Compact Serialization.
    *
-   * @param payload Binary representation of the payload to sign.
+   * @param payload JWS Payload bytes to sign or MAC.
    */
   constructor(payload: Uint8Array) {
-    if (!(payload instanceof Uint8Array)) {
-      throw new TypeError('payload must be an instance of Uint8Array')
-    }
+    assertUint8Array(payload, 'payload')
     this.#payload = payload
   }
 
   /**
-   * Sets the JWS Protected Header on the CompactSign object.
+   * Sets the JWS Protected Header. May only be called once.
    *
    * @param protectedHeader JWS Protected Header.
    */
@@ -55,9 +55,10 @@ export class CompactSign {
   }
 
   /**
-   * Signs and resolves the value of the Compact JWS string.
+   * Computes the JWS Signature (digital signature or MAC) and returns the JWS Compact
+   * Serialization.
    *
-   * @param key Private Key or Secret to sign the JWS with. See
+   * @param key Private key or shared secret. See
    *   {@link https://github.com/panva/jose/issues/210#jws-alg Algorithm Key Requirements}.
    * @param options JWS Sign options.
    */

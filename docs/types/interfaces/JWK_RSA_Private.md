@@ -4,7 +4,7 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-Convenience interface for Private RSA JSON Web Keys
+Convenience interface for private RSA JSON Web Keys.
 
 ## Properties
 
@@ -12,7 +12,7 @@ Convenience interface for Private RSA JSON Web Keys
 
 • **d**: `string`
 
-RSA JWK "d" (Private Exponent) Parameter
+Private exponent, encoded as Base64urlUInt (RFC 7518, Section 6.3.2).
 
 ***
 
@@ -20,7 +20,7 @@ RSA JWK "d" (Private Exponent) Parameter
 
 • **dp**: `string`
 
-RSA JWK "dp" (First Factor CRT Exponent) Parameter
+First factor CRT exponent, encoded as Base64urlUInt (RFC 7518, Section 6.3.2).
 
 ***
 
@@ -28,7 +28,7 @@ RSA JWK "dp" (First Factor CRT Exponent) Parameter
 
 • **dq**: `string`
 
-RSA JWK "dq" (Second Factor CRT Exponent) Parameter
+Second factor CRT exponent, encoded as Base64urlUInt (RFC 7518, Section 6.3.2).
 
 ***
 
@@ -36,7 +36,7 @@ RSA JWK "dq" (Second Factor CRT Exponent) Parameter
 
 • **e**: `string`
 
-RSA JWK "e" (Exponent) Parameter
+Public exponent, encoded as Base64urlUInt (RFC 7518, Section 6.3.1).
 
 ***
 
@@ -44,7 +44,7 @@ RSA JWK "e" (Exponent) Parameter
 
 • **n**: `string`
 
-RSA JWK "n" (Modulus) Parameter
+Modulus, encoded as Base64urlUInt (RFC 7518, Section 6.3.1).
 
 ***
 
@@ -52,7 +52,7 @@ RSA JWK "n" (Modulus) Parameter
 
 • **p**: `string`
 
-RSA JWK "p" (First Prime Factor) Parameter
+First prime factor, encoded as Base64urlUInt (RFC 7518, Section 6.3.2).
 
 ***
 
@@ -60,7 +60,7 @@ RSA JWK "p" (First Prime Factor) Parameter
 
 • **q**: `string`
 
-RSA JWK "q" (Second Prime Factor) Parameter
+Second prime factor, encoded as Base64urlUInt (RFC 7518, Section 6.3.2).
 
 ***
 
@@ -68,7 +68,7 @@ RSA JWK "q" (Second Prime Factor) Parameter
 
 • **qi**: `string`
 
-RSA JWK "qi" (First CRT Coefficient) Parameter
+First CRT coefficient, encoded as Base64urlUInt (RFC 7518, Section 6.3.2).
 
 ***
 
@@ -88,7 +88,7 @@ JWK "alg" (Algorithm) Parameter
 
 • `optional` **ext?**: `boolean`
 
-JWK "ext" (Extractable) Parameter
+Web Crypto "ext" (Extractable) member; whether the key may be exported.
 
 ***
 
@@ -96,7 +96,7 @@ JWK "ext" (Extractable) Parameter
 
 • `optional` **key\_ops?**: `string`[]
 
-JWK "key_ops" (Key Operations) Parameter
+JWK "key_ops" (Key Operations) Parameter (RFC 7517, Section 4.3).
 
 ***
 
@@ -128,7 +128,8 @@ JWK "use" (Public Key Use) Parameter
 
 • `optional` **x5c?**: `string`[]
 
-JWK "x5c" (X.509 Certificate Chain) Parameter
+"x5c" (X.509 Certificate Chain): base64-encoded DER certificates (RFC 7517, Section 4.7; RFC
+7515, Section 4.1.6).
 
 ***
 
@@ -136,7 +137,7 @@ JWK "x5c" (X.509 Certificate Chain) Parameter
 
 • `optional` **x5t?**: `string`
 
-JWK "x5t" (X.509 Certificate SHA-1 Thumbprint) Parameter
+"x5t" (X.509 Certificate SHA-1 Thumbprint): base64url-encoded digest of the DER certificate.
 
 ***
 
@@ -144,7 +145,8 @@ JWK "x5t" (X.509 Certificate SHA-1 Thumbprint) Parameter
 
 • `optional` **x5t#S256?**: `string`
 
-JWK "x5t#S256" (X.509 Certificate SHA-256 Thumbprint) Parameter
+"x5t#S256" (X.509 Certificate SHA-256 Thumbprint): base64url-encoded digest of the DER
+certificate.
 
 ***
 
@@ -152,4 +154,4 @@ JWK "x5t#S256" (X.509 Certificate SHA-256 Thumbprint) Parameter
 
 • `optional` **x5u?**: `string`
 
-JWK "x5u" (X.509 URL) Parameter
+JWK "x5u" (X.509 URL) Parameter: URL of a PEM-encoded certificate or certificate chain.

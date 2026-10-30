@@ -4,7 +4,7 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-Result of decoding an Unsecured JWT.
+Decoded Unsecured JWT.
 
 ## Type Parameters
 
@@ -18,12 +18,12 @@ Result of decoding an Unsecured JWT.
 
 • **header**: [`JWSHeaderParameters`](../../../types/interfaces/JWSHeaderParameters.md)
 
-The decoded JOSE Header; always `{ "alg": "none" }` for an Unsecured JWT.
+The decoded JOSE Header; its "alg" (Algorithm) Header Parameter is "none".
 
 ***
 
 ### payload
 
-• **payload**: `PayloadType` & [`JWTPayload`](../../../types/interfaces/JWTPayload.md)
+• **payload**: `PayloadType` & [`JWTPayload`](../../../types/interfaces/JWTPayload.md) & (\[`PayloadType`\] *extends* \[`object`\] ? `unknown` : `unknown` *extends* `PayloadType` ? `unknown` : `never`)
 
 JWT Claims Set.

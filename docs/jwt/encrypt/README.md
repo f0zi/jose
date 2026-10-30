@@ -4,4 +4,6 @@ JSON Web Token (JWT) Encryption (JWT is in JWE format)
 
 ## Classes
 
-- [EncryptJWT](classes/EncryptJWT.md)
+| Class | Description |
+| ------ | ------ |
+| [EncryptJWT](classes/EncryptJWT.md) | Produces encrypted JWTs in JWE Compact Serialization. |

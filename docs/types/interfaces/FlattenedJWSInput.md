@@ -4,8 +4,13 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-Flattened JWS definition for verify function inputs, allows payload as [Uint8Array](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) for
-detached signature validation.
+Flattened JWS JSON Serialization verification input.
+
+The payload may be a [Uint8Array](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) for detached signature validation.
+
+## See
+
+[RFC 7515, Section 7.2.2](https://www.rfc-editor.org/info/rfc7515/#section-7.2.2)
 
 ## Properties
 
@@ -13,8 +18,7 @@ detached signature validation.
 
 • **payload**: `string` \| [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array)
 
-The "payload" member MUST be present and contain the value BASE64URL(JWS Payload). When RFC7797
-"b64": false is used the value passed may also be a [Uint8Array](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array).
+Base64url-encoded JWS Payload; with `b64: false`, supply an unencoded string or Uint8Array.
 
 ***
 
@@ -22,7 +26,7 @@ The "payload" member MUST be present and contain the value BASE64URL(JWS Payload
 
 • **signature**: `string`
 
-The "signature" member MUST be present and contain the value BASE64URL(JWS Signature).
+Base64url-encoded JWS Signature (digital signature or MAC).
 
 ***
 
@@ -30,10 +34,7 @@ The "signature" member MUST be present and contain the value BASE64URL(JWS Signa
 
 • `optional` **header?**: [`JWSHeaderParameters`](JWSHeaderParameters.md)
 
-The "header" member MUST be present and contain the value JWS Unprotected Header when the JWS
-Unprotected Header value is non- empty; otherwise, it MUST be absent. This value is represented
-as an unencoded JSON object, rather than as a string. These Header Parameter values are not
-integrity protected.
+JWS Unprotected Header as a JSON object. Not integrity protected; omit when empty.
 
 ***
 
@@ -41,6 +42,4 @@ integrity protected.
 
 • `optional` **protected?**: `string`
 
-The "protected" member MUST be present and contain the value BASE64URL(UTF8(JWS Protected
-Header)) when the JWS Protected Header value is non-empty; otherwise, it MUST be absent. These
-Header Parameter values are integrity protected.
+Base64url-encoded UTF-8 JWS Protected Header. Integrity protected; omit when empty.

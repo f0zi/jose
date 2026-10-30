@@ -4,7 +4,7 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-Convenience interface for oct JSON Web Keys
+Convenience interface for "oct" JSON Web Keys.
 
 ## Properties
 
@@ -12,7 +12,7 @@ Convenience interface for oct JSON Web Keys
 
 • **k**: `string`
 
-Oct JWK "k" (Key Value) Parameter
+JWK "k" (Key Value): base64url-encoded key octets (RFC 7518, Section 6.4.1).
 
 ***
 
@@ -32,7 +32,7 @@ JWK "alg" (Algorithm) Parameter
 
 • `optional` **ext?**: `boolean`
 
-JWK "ext" (Extractable) Parameter
+Web Crypto "ext" (Extractable) member; whether the key may be exported.
 
 ***
 
@@ -40,7 +40,7 @@ JWK "ext" (Extractable) Parameter
 
 • `optional` **key\_ops?**: `string`[]
 
-JWK "key_ops" (Key Operations) Parameter
+JWK "key_ops" (Key Operations) Parameter (RFC 7517, Section 4.3).
 
 ***
 
@@ -72,7 +72,8 @@ JWK "use" (Public Key Use) Parameter
 
 • `optional` **x5c?**: `string`[]
 
-JWK "x5c" (X.509 Certificate Chain) Parameter
+"x5c" (X.509 Certificate Chain): base64-encoded DER certificates (RFC 7517, Section 4.7; RFC
+7515, Section 4.1.6).
 
 ***
 
@@ -80,7 +81,7 @@ JWK "x5c" (X.509 Certificate Chain) Parameter
 
 • `optional` **x5t?**: `string`
 
-JWK "x5t" (X.509 Certificate SHA-1 Thumbprint) Parameter
+"x5t" (X.509 Certificate SHA-1 Thumbprint): base64url-encoded digest of the DER certificate.
 
 ***
 
@@ -88,7 +89,8 @@ JWK "x5t" (X.509 Certificate SHA-1 Thumbprint) Parameter
 
 • `optional` **x5t#S256?**: `string`
 
-JWK "x5t#S256" (X.509 Certificate SHA-256 Thumbprint) Parameter
+"x5t#S256" (X.509 Certificate SHA-256 Thumbprint): base64url-encoded digest of the DER
+certificate.
 
 ***
 
@@ -96,4 +98,4 @@ JWK "x5t#S256" (X.509 Certificate SHA-256 Thumbprint) Parameter
 
 • `optional` **x5u?**: `string`
 
-JWK "x5u" (X.509 URL) Parameter
+JWK "x5u" (X.509 URL) Parameter: URL of a PEM-encoded certificate or certificate chain.

@@ -44,8 +44,7 @@ JWK "alg" (Algorithm) Parameter
 
 • `optional` **crv?**: `string`
 
-- EC JWK "crv" (Curve) Parameter
-- OKP JWK "crv" (The Subtype of Key Pair) Parameter
+JWK "crv" Parameter: Curve for EC keys or Subtype of Key Pair for OKP keys.
 
 ***
 
@@ -53,9 +52,8 @@ JWK "alg" (Algorithm) Parameter
 
 • `optional` **d?**: `string`
 
-- Private RSA JWK "d" (Private Exponent) Parameter
-- Private EC JWK "d" (ECC Private Key) Parameter
-- Private OKP JWK "d" (The Private Key) Parameter
+Private key material: Base64urlUInt for RSA (RFC 7518, Section 6.3.2.1), base64url-encoded
+octets for EC (Section 6.2.2.1) or OKP (RFC 8037, Section 2).
 
 ***
 
@@ -63,7 +61,7 @@ JWK "alg" (Algorithm) Parameter
 
 • `optional` **dp?**: `string`
 
-Private RSA JWK "dp" (First Factor CRT Exponent) Parameter
+RSA first factor CRT exponent, encoded as Base64urlUInt (RFC 7518, Section 6.3).
 
 ***
 
@@ -71,7 +69,7 @@ Private RSA JWK "dp" (First Factor CRT Exponent) Parameter
 
 • `optional` **dq?**: `string`
 
-Private RSA JWK "dq" (Second Factor CRT Exponent) Parameter
+RSA second factor CRT exponent, encoded as Base64urlUInt (RFC 7518, Section 6.3).
 
 ***
 
@@ -79,7 +77,7 @@ Private RSA JWK "dq" (Second Factor CRT Exponent) Parameter
 
 • `optional` **e?**: `string`
 
-RSA JWK "e" (Exponent) Parameter
+RSA public exponent, encoded as Base64urlUInt (RFC 7518, Section 6.3).
 
 ***
 
@@ -87,7 +85,7 @@ RSA JWK "e" (Exponent) Parameter
 
 • `optional` **ext?**: `boolean`
 
-JWK "ext" (Extractable) Parameter
+Web Crypto "ext" (Extractable) member; whether the key may be exported.
 
 ***
 
@@ -95,7 +93,7 @@ JWK "ext" (Extractable) Parameter
 
 • `optional` **k?**: `string`
 
-Oct JWK "k" (Key Value) Parameter
+JWK "k" (Key Value): base64url-encoded key octets (RFC 7518, Section 6.4.1).
 
 ***
 
@@ -103,7 +101,7 @@ Oct JWK "k" (Key Value) Parameter
 
 • `optional` **key\_ops?**: `string`[]
 
-JWK "key_ops" (Key Operations) Parameter
+JWK "key_ops" (Key Operations) Parameter (RFC 7517, Section 4.3).
 
 ***
 
@@ -127,7 +125,7 @@ JWK "kty" (Key Type) Parameter
 
 • `optional` **n?**: `string`
 
-RSA JWK "n" (Modulus) Parameter
+RSA modulus, encoded as Base64urlUInt (RFC 7518, Section 6.3).
 
 ***
 
@@ -135,28 +133,25 @@ RSA JWK "n" (Modulus) Parameter
 
 • `optional` **oth?**: `object`[]
 
-RSA JWK "oth" (Other Primes Info) Parameter
-
-> [!NOTE]\
-> Multi-prime RSA keys are not supported; importing a JWK with this parameter present throws.
+Additional RSA prime factors.
 
 #### d?
 
 • `optional` **d?**: `string`
 
-The Factor CRT Exponent
+Factor CRT exponent, encoded as Base64urlUInt (RFC 7518, Section 6.3).
 
 #### r?
 
 • `optional` **r?**: `string`
 
-The Prime Factor
+Prime factor, encoded as Base64urlUInt (RFC 7518, Section 6.3).
 
 #### t?
 
 • `optional` **t?**: `string`
 
-The Factor CRT Coefficient
+Factor CRT coefficient, encoded as Base64urlUInt (RFC 7518, Section 6.3).
 
 ***
 
@@ -164,7 +159,7 @@ The Factor CRT Coefficient
 
 • `optional` **p?**: `string`
 
-Private RSA JWK "p" (First Prime Factor) Parameter
+RSA first prime factor, encoded as Base64urlUInt (RFC 7518, Section 6.3).
 
 ***
 
@@ -172,7 +167,8 @@ Private RSA JWK "p" (First Prime Factor) Parameter
 
 • `optional` **priv?**: `string`
 
-AKP JWK "priv" (Private key) Parameter
+AKP JWK "priv" (Private Key): base64url-encoded private key; ML-DSA uses a 32-octet seed (RFC
+9964, Sections 3-4)
 
 ***
 
@@ -180,7 +176,7 @@ AKP JWK "priv" (Private key) Parameter
 
 • `optional` **pub?**: `string`
 
-AKP JWK "pub" (Public Key) Parameter
+AKP JWK "pub" (Public Key): base64url-encoded public key (RFC 9964, Section 3)
 
 ***
 
@@ -188,7 +184,7 @@ AKP JWK "pub" (Public Key) Parameter
 
 • `optional` **q?**: `string`
 
-Private RSA JWK "q" (Second Prime Factor) Parameter
+RSA second prime factor, encoded as Base64urlUInt (RFC 7518, Section 6.3).
 
 ***
 
@@ -196,7 +192,7 @@ Private RSA JWK "q" (Second Prime Factor) Parameter
 
 • `optional` **qi?**: `string`
 
-Private RSA JWK "qi" (First CRT Coefficient) Parameter
+RSA first CRT coefficient, encoded as Base64urlUInt (RFC 7518, Section 6.3).
 
 ***
 
@@ -212,8 +208,8 @@ JWK "use" (Public Key Use) Parameter
 
 • `optional` **x?**: `string`
 
-- EC JWK "x" (X Coordinate) Parameter
-- OKP JWK "x" (The public key) Parameter
+Base64url-encoded EC x-coordinate (RFC 7518, Section 6.2.1.2) or OKP public key (RFC 8037,
+Section 2).
 
 ***
 
@@ -221,7 +217,8 @@ JWK "use" (Public Key Use) Parameter
 
 • `optional` **x5c?**: `string`[]
 
-JWK "x5c" (X.509 Certificate Chain) Parameter
+"x5c" (X.509 Certificate Chain): base64-encoded DER certificates (RFC 7517, Section 4.7; RFC
+7515, Section 4.1.6).
 
 ***
 
@@ -229,7 +226,7 @@ JWK "x5c" (X.509 Certificate Chain) Parameter
 
 • `optional` **x5t?**: `string`
 
-JWK "x5t" (X.509 Certificate SHA-1 Thumbprint) Parameter
+"x5t" (X.509 Certificate SHA-1 Thumbprint): base64url-encoded digest of the DER certificate.
 
 ***
 
@@ -237,7 +234,8 @@ JWK "x5t" (X.509 Certificate SHA-1 Thumbprint) Parameter
 
 • `optional` **x5t#S256?**: `string`
 
-JWK "x5t#S256" (X.509 Certificate SHA-256 Thumbprint) Parameter
+"x5t#S256" (X.509 Certificate SHA-256 Thumbprint): base64url-encoded digest of the DER
+certificate.
 
 ***
 
@@ -245,7 +243,7 @@ JWK "x5t#S256" (X.509 Certificate SHA-256 Thumbprint) Parameter
 
 • `optional` **x5u?**: `string`
 
-JWK "x5u" (X.509 URL) Parameter
+JWK "x5u" (X.509 URL) Parameter: URL of a PEM-encoded certificate or certificate chain.
 
 ***
 
@@ -253,4 +251,4 @@ JWK "x5u" (X.509 URL) Parameter
 
 • `optional` **y?**: `string`
 
-EC JWK "y" (Y Coordinate) Parameter
+Base64url-encoded EC y-coordinate (RFC 7518, Section 6.2.1.3).

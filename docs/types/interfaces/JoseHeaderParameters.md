@@ -4,7 +4,7 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-Header Parameters common to JWE and JWS
+Header Parameters common to JWE and JWS.
 
 ## Properties
 
@@ -12,7 +12,7 @@ Header Parameters common to JWE and JWS
 
 • `optional` **cty?**: `string`
 
-"cty" (Content Type) Header Parameter
+"cty" (Content Type) Header Parameter (RFC 7515, Section 4.1.10).
 
 ***
 
@@ -20,7 +20,7 @@ Header Parameters common to JWE and JWS
 
 • `optional` **jku?**: `string`
 
-"jku" (JWK Set URL) Header Parameter
+"jku" (JWK Set URL) Header Parameter (RFC 7515, Section 4.1.2).
 
 ***
 
@@ -28,8 +28,8 @@ Header Parameters common to JWE and JWS
 
 • `optional` **jwk?**: [`Omit`](https://www.typescriptlang.org/docs/handbook/utility-types.html#omittype-keys)\<[`JWK`](../type-aliases/JWK.md), `"d"` \| `"p"` \| `"q"` \| `"k"` \| `"dp"` \| `"dq"` \| `"qi"` \| `"priv"` \| `"oth"`\>
 
-"jwk" (JSON Web Key) Header Parameter. This must be a public JSON Web Key; private and
-symmetric key parameters are not permitted.
+"jwk" (JSON Web Key) Header Parameter: public JWK only; private and symmetric key parameters
+are not permitted.
 
 ***
 
@@ -53,7 +53,8 @@ symmetric key parameters are not permitted.
 
 • `optional` **x5c?**: `string`[]
 
-"x5c" (X.509 Certificate Chain) Header Parameter
+"x5c" (X.509 Certificate Chain): base64-encoded DER certificates (RFC 7517, Section 4.7; RFC
+7515, Section 4.1.6).
 
 ***
 
@@ -61,7 +62,7 @@ symmetric key parameters are not permitted.
 
 • `optional` **x5t?**: `string`
 
-"x5t" (X.509 Certificate SHA-1 Thumbprint) Header Parameter
+"x5t" (X.509 Certificate SHA-1 Thumbprint): base64url-encoded digest of the DER certificate.
 
 ***
 
@@ -69,4 +70,4 @@ symmetric key parameters are not permitted.
 
 • `optional` **x5u?**: `string`
 
-"x5u" (X.509 URL) Header Parameter
+"x5u" (X.509 URL) Header Parameter: URL of a PEM-encoded certificate or certificate chain.

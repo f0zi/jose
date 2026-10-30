@@ -1,13 +1,21 @@
 import type * as types from '../types.d.ts'
 import { decrypt, generateCek } from './content_encryption.js'
-import { decodeBase64url, encodeBase64url, parseJoseHeader } from './helpers.js'
+import {
+  decodeBase64url,
+  encodeAsciiMember,
+  parseJoseHeader,
+  isDisjoint,
+  isObject,
+  validateCrit,
+  validateAlgorithms,
+  JWE_RECOGNIZED,
+} from './validate.js'
 import { JOSEAlgNotAllowed, JOSENotSupported, JWEInvalid } from '../util/errors.js'
-import { isDisjoint, isObject } from './type_checks.js'
 import { decryptKeyManagement } from './key_management.js'
-import { concat, decoder, encode } from './buffer_utils.js'
-import { validateCrit, validateAlgorithms, JWE_RECOGNIZED } from './options.js'
+import { decoder } from './buffer_utils.js'
 import { prepareKey } from './key.js'
-import { jweAlgorithm, jweEncryption } from './jwe_algorithms.js'
+import { JWE, isJWECEKTransport, jweAlgorithm, jweEncryption } from './jwe_algorithms.js'
+import type { JWEEncryption } from './jwe_algorithms.js'
 import { decompress, validateZip } from './deflate.js'
 
 export type DecryptGetKey = (
@@ -24,23 +32,16 @@ export type DecryptShared = [
   maxDecompressedLength: number | undefined,
 ]
 
-export type DecryptedJWE = [
-  plaintext: Uint8Array,
-  parsedProt: types.JWEHeaderParameters | undefined,
-  key: types.CryptoKey | Uint8Array,
-  resolvedKey: boolean,
-]
-
 /**
  * The parts of a JWE that every recipient shares. A General JWE pays for these once instead of once
  * per recipient.
  */
 export type SharedJWE = [
-  parsedProt: types.JWEHeaderParameters | undefined,
+  protectedHeader: types.JWEHeaderParameters | undefined,
   ciphertext: Uint8Array,
   iv: Uint8Array | undefined,
   tag: Uint8Array | undefined,
-  additionalData: Uint8Array,
+  additionalAuthenticatedData: Uint8Array,
 ]
 
 export type SharedJWEMembers = Pick<
@@ -57,7 +58,7 @@ export type RecipientJWESnapshot =
 /** Captures and validates shared members without reading any of them twice. */
 export function snapshotSharedJWE(jwe: types.FlattenedJWE | types.GeneralJWE): SharedJWEMembers {
   const { aad, ciphertext, iv, protected: encodedProtected, tag, unprotected } = jwe
-  if (iv !== undefined && typeof iv !== 'string') {
+  if (iv !== undefined && (typeof iv !== 'string' || !iv)) {
     throw new JWEInvalid('JWE Initialization Vector incorrect type')
   }
 
@@ -65,7 +66,7 @@ export function snapshotSharedJWE(jwe: types.FlattenedJWE | types.GeneralJWE): S
     throw new JWEInvalid('JWE Ciphertext missing or incorrect type')
   }
 
-  if (tag !== undefined && typeof tag !== 'string') {
+  if (tag !== undefined && (typeof tag !== 'string' || !tag)) {
     throw new JWEInvalid('JWE Authentication Tag incorrect type')
   }
 
@@ -110,11 +111,6 @@ export function snapshotRecipientJWE(recipient: RecipientJWEMembers): RecipientJ
     } else {
       header = inputHeader
     }
-  } catch (error) {
-    return [undefined, headerAlg, error]
-  }
-
-  try {
     const { encrypted_key: encryptedKey } = recipient
     return [{ encrypted_key: encryptedKey, header }, headerAlg]
   } catch (error) {
@@ -125,6 +121,8 @@ export function snapshotRecipientJWE(recipient: RecipientJWEMembers): RecipientJ
 /** Checks the members that belong to one recipient. */
 export function checkRecipient(jwe: types.FlattenedJWE): void {
   const { encrypted_key: encryptedKey, header } = jwe
+  // Whether an empty string is a structural error depends on the resolved key-management mode.
+  // CEK transports must send it through RFC 3218 failure substitution instead.
   if (encryptedKey !== undefined && typeof encryptedKey !== 'string') {
     throw new JWEInvalid('JWE Encrypted Key incorrect type')
   }
@@ -142,56 +140,29 @@ export function checkRecipient(jwe: types.FlattenedJWE): void {
 
 /** Parses and decodes the shared members. Their types must already have been checked. */
 export function shareJWE(jwe: SharedJWEMembers): SharedJWE {
+  // draft-ietf-jose-hpke-encrypt-22, Section 7.2, steps 2-3: decode and parse.
   const { protected: encodedProtected, ciphertext, iv, tag, aad } = jwe
-  let parsedProt: types.JWEHeaderParameters | undefined
+  let protectedHeader: types.JWEHeaderParameters | undefined
   if (encodedProtected !== undefined) {
-    parsedProt = parseJoseHeader(encodedProtected, JWEInvalid, 'JWE Protected Header is invalid')
+    protectedHeader = parseJoseHeader(
+      encodedProtected,
+      JWEInvalid,
+      'JWE Protected Header is invalid',
+    )
   }
 
-  const protectedHeader: Uint8Array =
-    encodedProtected !== undefined ? encode(encodedProtected) : new Uint8Array()
-
   return [
-    parsedProt,
+    protectedHeader,
     decodeBase64url(ciphertext, 'ciphertext', JWEInvalid),
     iv !== undefined ? decodeBase64url(iv, 'iv', JWEInvalid) : undefined,
     tag !== undefined ? decodeBase64url(tag, 'tag', JWEInvalid) : undefined,
-    aad !== undefined
-      ? concat(protectedHeader, encode('.'), encodeBase64url(aad, 'aad', JWEInvalid))
-      : protectedHeader,
+    // draft-ietf-jose-hpke-encrypt-22, Section 7.2, steps 15-16: use the received Encoded Protected Header.
+    encodeAsciiMember(
+      (encodedProtected ?? '') + (aad !== undefined ? `.${aad}` : ''),
+      'aad',
+      JWEInvalid,
+    ),
   ]
-}
-
-/** Flattened and General results have the same shape, so they are assembled in one place. */
-export function decryptResult(
-  jwe: types.FlattenedJWE,
-  decrypted: DecryptedJWE,
-): types.FlattenedDecryptResult & Partial<types.ResolvedKey> {
-  const [plaintext, parsedProt, key, resolvedKey] = decrypted
-  const { protected: encodedProtected, aad, unprotected, header } = jwe
-  const result: types.FlattenedDecryptResult = { plaintext }
-
-  if (encodedProtected !== undefined) {
-    result.protectedHeader = parsedProt
-  }
-
-  if (aad !== undefined) {
-    result.additionalAuthenticatedData = decodeBase64url(aad, 'aad', JWEInvalid)
-  }
-
-  if (unprotected !== undefined) {
-    result.sharedUnprotectedHeader = unprotected
-  }
-
-  if (header !== undefined) {
-    result.unprotectedHeader = header
-  }
-
-  if (resolvedKey) {
-    return { ...result, key }
-  }
-
-  return result
 }
 
 export function prepareDecrypt(options?: types.DecryptOptions): DecryptShared {
@@ -205,39 +176,29 @@ export function prepareDecrypt(options?: types.DecryptOptions): DecryptShared {
   ]
 }
 
-/** Decrypts for one recipient, given the already-parsed shared parts of the JWE. */
-export async function decryptRecipient(
+/** Decrypts one recipient, optionally reusing a General JWE's already-decoded shared members. */
+export async function decryptJWE(
   jwe: types.FlattenedJWE,
-  token: SharedJWE,
   shared: DecryptShared,
   key: types.KeyInput | DecryptGetKey,
-): Promise<DecryptedJWE> {
-  const [parsedProt] = token
-  const { header, unprotected } = jwe
+  token: SharedJWE = shareJWE(jwe),
+): Promise<types.FlattenedDecryptResult & Partial<types.ResolvedKey>> {
+  const [protectedHeader, ciphertext, iv, tag, additionalAuthenticatedData] = token
+  const { header, unprotected, aad } = jwe
 
+  // draft-ietf-jose-hpke-encrypt-22, Section 7.2, step 4: form the JOSE Header.
   let joseHeader: types.JWEHeaderParameters
   if (header !== undefined || unprotected !== undefined) {
-    if (!isDisjoint(parsedProt, header, unprotected)) {
+    if (!isDisjoint(protectedHeader, header, unprotected)) {
       throw new JWEInvalid(
         'JWE Protected, JWE Unprotected Header, and JWE Per-Recipient Unprotected Header Parameter names must be disjoint',
       )
     }
-    joseHeader = { ...parsedProt, ...header, ...unprotected }
+    joseHeader = { ...protectedHeader, ...header, ...unprotected }
   } else {
-    joseHeader = parsedProt ?? {}
+    joseHeader = protectedHeader ?? {}
   }
 
-  return decryptRecipientCore(jwe, token, shared, key, joseHeader)
-}
-
-/** Performs the common cryptographic work after a serialization adapter has assembled its header. */
-async function decryptRecipientCore(
-  jwe: types.FlattenedJWE,
-  token: SharedJWE,
-  shared: DecryptShared,
-  key: types.KeyInput | DecryptGetKey,
-  joseHeader: types.JWEHeaderParameters,
-): Promise<DecryptedJWE> {
   const [
     keyManagementAlgorithms,
     contentEncryptionAlgorithms,
@@ -245,12 +206,11 @@ async function decryptRecipientCore(
     maxPBES2Count,
     maxDecompressedLength,
   ] = shared
-  const [parsedProt, ciphertext, iv, tag, additionalData] = token
   const { encrypted_key: encodedKey } = jwe
 
-  validateCrit(JWEInvalid, JWE_RECOGNIZED, crit, parsedProt, joseHeader)
+  validateCrit(JWEInvalid, JWE_RECOGNIZED, crit, protectedHeader, joseHeader)
 
-  validateZip(joseHeader, parsedProt)
+  validateZip(joseHeader, protectedHeader)
 
   const { alg, enc } = joseHeader
 
@@ -258,7 +218,12 @@ async function decryptRecipientCore(
     throw new JWEInvalid('missing JWE Algorithm (alg) in JWE Header')
   }
 
-  if (typeof enc !== 'string' || !enc) {
+  const selected = JWE[alg]
+  if (encodedKey === '' && (!selected || !isJWECEKTransport(selected))) {
+    throw new JWEInvalid('JWE Encrypted Key incorrect type')
+  }
+  const integrated = selected?.mode === 'integrated-encryption'
+  if (!integrated && (typeof enc !== 'string' || !enc)) {
     throw new JWEInvalid('missing JWE Encryption Algorithm (enc) in JWE Header')
   }
 
@@ -269,50 +234,110 @@ async function decryptRecipientCore(
     throw new JOSEAlgNotAllowed('"alg" (Algorithm) Header Parameter value not allowed')
   }
 
-  if (contentEncryptionAlgorithms && !contentEncryptionAlgorithms.has(enc)) {
-    throw new JOSEAlgNotAllowed('"enc" (Encryption Algorithm) Header Parameter value not allowed')
+  let encEntry: JWEEncryption | undefined
+  if (integrated) {
+    // draft-ietf-jose-hpke-encrypt-22, Section 7.2, step 18: enc must be absent.
+    if (enc !== undefined) {
+      throw new JWEInvalid(
+        'JWE "enc" (Encryption Algorithm) Header Parameter must not be present for integrated encryption',
+      )
+    }
+    if (iv?.byteLength) {
+      throw new JWEInvalid('JWE Initialization Vector must be empty for integrated encryption')
+    }
+    if (tag?.byteLength) {
+      throw new JWEInvalid('JWE Authentication Tag must be empty for integrated encryption')
+    }
+  } else {
+    if (contentEncryptionAlgorithms && !contentEncryptionAlgorithms.has(enc as string)) {
+      throw new JOSEAlgNotAllowed('"enc" (Encryption Algorithm) Header Parameter value not allowed')
+    }
+    encEntry = jweEncryption(enc)
   }
 
-  const encEntry = jweEncryption(enc)
-
-  let encryptedKey!: Uint8Array
+  let encryptedKey: Uint8Array | undefined
   if (encodedKey !== undefined) {
-    encryptedKey = decodeBase64url(encodedKey, 'encrypted_key', JWEInvalid)
+    try {
+      encryptedKey = decodeBase64url(encodedKey, 'encrypted_key', JWEInvalid)
+    } catch (error) {
+      if (!selected || !isJWECEKTransport(selected)) throw error
+      // RFC 7516 Section 11.5 requires a transported CEK's format, padding, and length failures
+      // to be indistinguishable. Feed malformed encodings through the same unwrap/decrypt and
+      // random-CEK substitution path as other malformed Encrypted Key values.
+      encryptedKey = new Uint8Array()
+    }
   }
 
   let resolvedKey = false
   if (typeof key === 'function') {
-    key = await key(parsedProt, jwe)
+    key = await key(protectedHeader, jwe)
     resolvedKey = true
   }
-  const algEntry = jweAlgorithm(alg)
-  const k = await prepareKey(alg === 'dir' ? encEntry : algEntry, key, 'decrypt')
-  let cek: types.CryptoKey | Uint8Array
-  try {
-    cek = await decryptKeyManagement(alg, encEntry, k, encryptedKey, joseHeader, maxPBES2Count)
-    if (
-      encodedKey !== undefined &&
-      cek instanceof Uint8Array &&
-      cek.byteLength << 3 !== encEntry.cekBits
-    ) {
-      cek = generateCek(encEntry)
+  const algEntry = selected ?? jweAlgorithm(alg)
+  if (isJWECEKTransport(algEntry) && encryptedKey === undefined) {
+    // RFC 7516 Section 11.5 requires malformed, missing, and wrong-length transported CEKs to be
+    // indistinguishable. Let the unwrap/decrypt fail and substitute a random CEK below.
+    encryptedKey = new Uint8Array()
+  }
+  const k = await prepareKey(
+    algEntry.mode === 'direct-encryption' ? encEntry! : algEntry,
+    key,
+    'decrypt',
+  )
+
+  let plaintext: Uint8Array
+  if (algEntry.mode === 'integrated-encryption') {
+    // draft-ietf-jose-hpke-encrypt-22, Section 7.2, step 19: authenticated integrated decryption.
+    plaintext = await algEntry.decrypt(
+      k,
+      encryptedKey,
+      ciphertext,
+      additionalAuthenticatedData,
+      protectedHeader,
+      joseHeader,
+    )
+  } else {
+    const encryption = encEntry!
+    let cek: types.CryptoKey | Uint8Array
+    try {
+      cek = await decryptKeyManagement(
+        algEntry,
+        encryption,
+        k,
+        encryptedKey,
+        joseHeader,
+        maxPBES2Count,
+      )
+      if (
+        isJWECEKTransport(algEntry) &&
+        cek instanceof Uint8Array &&
+        cek.byteLength << 3 !== encryption.cekBits
+      ) {
+        cek = generateCek(encryption)
+      }
+    } catch (err) {
+      if (
+        err instanceof TypeError ||
+        err instanceof JWEInvalid ||
+        err instanceof JOSENotSupported
+      ) {
+        throw err
+      }
+      // https://www.rfc-editor.org/info/rfc7516/#section-11.5
+      // To mitigate the attacks described in RFC 3218, the
+      // recipient MUST NOT distinguish between format, padding, and length
+      // errors of encrypted keys.  It is strongly recommended, in the event
+      // of receiving an improperly formatted key, that the recipient
+      // substitute a randomly generated CEK and proceed to the next step, to
+      // mitigate timing attacks.
+      cek = generateCek(encryption)
     }
-  } catch (err) {
-    if (err instanceof TypeError || err instanceof JWEInvalid || err instanceof JOSENotSupported) {
-      throw err
-    }
-    // https://www.rfc-editor.org/info/rfc7516/#section-11.5
-    // To mitigate the attacks described in RFC 3218, the
-    // recipient MUST NOT distinguish between format, padding, and length
-    // errors of encrypted keys.  It is strongly recommended, in the event
-    // of receiving an improperly formatted key, that the recipient
-    // substitute a randomly generated CEK and proceed to the next step, to
-    // mitigate timing attacks.
-    cek = generateCek(encEntry)
+
+    // draft-ietf-jose-hpke-encrypt-22, Section 7.2, step 17: authenticate before releasing plaintext.
+    plaintext = await decrypt(encryption, cek, ciphertext, iv, tag, additionalAuthenticatedData)
   }
 
-  let plaintext = await decrypt(encEntry, cek, ciphertext, iv, tag, additionalData)
-
+  // draft-ietf-jose-hpke-encrypt-22, Section 7.2, step 20.
   if (joseHeader.zip === 'DEF') {
     const decompressionLimit = maxDecompressedLength ?? 250_000
     if (decompressionLimit === 0) {
@@ -332,19 +357,16 @@ async function decryptRecipientCore(
     })
   }
 
-  return [plaintext, parsedProt, k, resolvedKey]
-}
-
-/**
- * Decrypts a single-recipient JWE. `jwe` must already have been checked to have the member types
- * the Flattened Serialization requires; the Compact adapter gets that for free from String#split.
- */
-export async function decryptJWE(
-  jwe: types.FlattenedJWE,
-  shared: DecryptShared,
-  key: types.KeyInput | DecryptGetKey,
-): Promise<DecryptedJWE> {
-  return decryptRecipient(jwe, shareJWE(jwe), shared, key)
+  return {
+    plaintext,
+    ...(protectedHeader && { protectedHeader }),
+    ...(aad !== undefined && {
+      additionalAuthenticatedData: decodeBase64url(aad, 'aad', JWEInvalid),
+    }),
+    ...(unprotected && { sharedUnprotectedHeader: unprotected }),
+    ...(header && { unprotectedHeader: header }),
+    ...(resolvedKey && { key: k }),
+  }
 }
 
 /** Splits a Compact JWE and decrypts it. Every member is a string by construction. */
@@ -352,7 +374,7 @@ export async function decryptCompact(
   jwe: string | Uint8Array,
   shared: DecryptShared,
   key: types.KeyInput | DecryptGetKey,
-): Promise<DecryptedJWE> {
+): Promise<types.CompactDecryptResult & Partial<types.ResolvedKey>> {
   if (jwe instanceof Uint8Array) {
     jwe = decoder.decode(jwe)
   }
@@ -381,19 +403,7 @@ export async function decryptCompact(
     tag: tag || undefined,
     encrypted_key: encryptedKey || undefined,
   }
-  const parsedProt = parseJoseHeader<types.JWEHeaderParameters>(
-    protectedHeader,
-    JWEInvalid,
-    'JWE Protected Header is invalid',
-  )
-  const protectedBytes = encode(protectedHeader)
-  const token: SharedJWE = [
-    parsedProt,
-    decodeBase64url(ciphertext, 'ciphertext', JWEInvalid),
-    iv ? decodeBase64url(iv, 'iv', JWEInvalid) : undefined,
-    tag ? decodeBase64url(tag, 'tag', JWEInvalid) : undefined,
-    protectedBytes,
-  ]
-
-  return decryptRecipientCore(flattened, token, shared, key, parsedProt)
+  return decryptJWE(flattened, shared, key) as Promise<
+    types.CompactDecryptResult & Partial<types.ResolvedKey>
+  >
 }

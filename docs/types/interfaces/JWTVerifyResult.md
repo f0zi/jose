@@ -4,7 +4,7 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-Signed JSON Web Token (JWT) verification result
+Signed or MACed JSON Web Token (JWT) verification result.
 
 ## Type Parameters
 
@@ -16,7 +16,7 @@ Signed JSON Web Token (JWT) verification result
 
 ### payload
 
-• **payload**: `PayloadType` & [`JWTPayload`](JWTPayload.md)
+• **payload**: `PayloadType` & [`JWTPayload`](JWTPayload.md) & (\[`PayloadType`\] *extends* \[`object`\] ? `unknown` : `unknown` *extends* `PayloadType` ? `unknown` : `never`)
 
 JWT Claims Set.
 
