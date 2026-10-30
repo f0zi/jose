@@ -1,12 +1,19 @@
 import type * as types from '../types.d.ts'
-import { verify } from './signing.js'
 import { jwsAlgorithm } from './jws_algorithms.js'
 import { JOSEAlgNotAllowed, JWSInvalid, JWSSignatureVerificationFailed } from '../util/errors.js'
 import { concat, decoder, encoder, encode } from './buffer_utils.js'
-import { decodeBase64url, encodeBase64url, parseJoseHeader } from './helpers.js'
-import { isDisjoint, isObject } from './type_checks.js'
-import { validateB64, validateCrit, validateAlgorithms, JWS_RECOGNIZED } from './options.js'
-import { prepareKey } from './key.js'
+import {
+  decodeBase64url,
+  encodeAsciiMember,
+  parseJoseHeader,
+  isDisjoint,
+  isObject,
+  validateB64,
+  validateCrit,
+  validateAlgorithms,
+  JWS_RECOGNIZED,
+} from './validate.js'
+import { prepareKey, rawKey, checkModulusLength } from './key.js'
 
 export type VerifyGetKey = (
   protectedHeader: types.JWSHeaderParameters,
@@ -18,23 +25,20 @@ export type VerifyShared = [
   algorithms: Set<string> | undefined,
   crit: { [propName: string]: boolean } | undefined,
   /** ASCII octets of a base64url payload, reused as signing input across signatures. */
-  b64p?: Uint8Array,
+  encodedPayloadOctets?: Uint8Array,
 ]
 
 export type VerifiedSignature = [
-  payload: Uint8Array,
-  parsedProt: types.JWSHeaderParameters,
+  result: types.FlattenedVerifyResult & Partial<types.ResolvedKey>,
   b64: boolean,
-  key: types.CryptoKey | Uint8Array,
-  resolvedKey: boolean,
 ]
 
-/** Captures a Flattened JWS and its unprotected header into data properties. */
+/** Captures a JSON signature into data properties and validates its serialization members. */
 export function snapshotJws(
   jws: types.FlattenedJWSInput,
   sharedPayload?: [payload: types.FlattenedJWSInput['payload']],
 ): types.FlattenedJWSInput {
-  const encodedProtected = jws.protected
+  const encodedProtectedHeader = jws.protected
   const inputHeader = jws.header
   const header = isObject<types.JWSHeaderParameters>(inputHeader) ? { ...inputHeader } : inputHeader
   let payload = sharedPayload ? sharedPayload[0] : jws.payload
@@ -44,94 +48,41 @@ export function snapshotJws(
   const signature = jws.signature
 
   const snapshot: types.FlattenedJWSInput = { payload, signature }
-  if (encodedProtected !== undefined) snapshot.protected = encodedProtected
+  if (encodedProtectedHeader !== undefined) snapshot.protected = encodedProtectedHeader
   if (inputHeader !== undefined) snapshot.header = header!
+
+  if (encodedProtectedHeader === undefined && header === undefined) {
+    throw new JWSInvalid('Flattened JWS must have either of the "protected" or "header" members')
+  }
+  if (encodedProtectedHeader !== undefined && typeof encodedProtectedHeader !== 'string') {
+    throw new JWSInvalid('JWS Protected Header incorrect type')
+  }
+  if (payload === undefined) {
+    throw new JWSInvalid('JWS Payload missing')
+  }
+  if (typeof signature !== 'string') {
+    throw new JWSInvalid('JWS Signature missing or incorrect type')
+  }
+  if (header !== undefined && !isObject(header)) {
+    throw new JWSInvalid('JWS Unprotected Header incorrect type')
+  }
   return snapshot
-}
-
-/** Flattened and General results have the same shape, so they are assembled in one place. */
-export function verifyResult(
-  jws: types.FlattenedJWSInput | Omit<types.FlattenedJWSInput, 'payload'>,
-  verified: VerifiedSignature,
-): types.FlattenedVerifyResult & Partial<types.ResolvedKey> {
-  const [payload, parsedProt, , key, resolvedKey] = verified
-  const result: types.FlattenedVerifyResult = { payload }
-
-  if (jws.protected !== undefined) {
-    result.protectedHeader = parsedProt
-  }
-
-  if (jws.header !== undefined) {
-    result.unprotectedHeader = jws.header
-  }
-
-  if (resolvedKey) {
-    return { ...result, key }
-  }
-
-  return result
 }
 
 export function prepareVerify(options?: types.VerifyOptions): VerifyShared {
   return [options && validateAlgorithms('algorithms', options.algorithms), options?.crit]
 }
 
+// RFC 7515, Section 5.2, steps 2-3.
 export function parseProtectedHeader(
-  encodedProtected: string | undefined,
-  parsedProtected: types.JWSHeaderParameters = encodedProtected === undefined
-    ? {}
-    : parseJoseHeader(encodedProtected, JWSInvalid, 'JWS Protected Header is invalid'),
+  encodedProtectedHeader: string | undefined,
 ): types.JWSHeaderParameters {
-  return parsedProtected
+  return encodedProtectedHeader === undefined
+    ? {}
+    : parseJoseHeader(encodedProtectedHeader, JWSInvalid, 'JWS Protected Header is invalid')
 }
 
-function validateJwsHeaders(
-  parsedProt: types.JWSHeaderParameters,
-  joseHeader: types.JWSHeaderParameters,
-  shared: VerifyShared,
-): [b64: boolean, alg: string] {
-  const b64 = validateB64(
-    parsedProt,
-    validateCrit(JWSInvalid, JWS_RECOGNIZED, shared[1], parsedProt, joseHeader),
-  )
-  const alg = joseHeader.alg
-  if (typeof alg !== 'string' || !alg) {
-    throw new JWSInvalid('JWS "alg" (Algorithm) Header Parameter missing or invalid')
-  }
-  if (shared[0] && !shared[0].has(alg)) {
-    throw new JOSEAlgNotAllowed('"alg" (Algorithm) Header Parameter value not allowed')
-  }
-  return [b64, alg]
-}
-
-export function parseJwsHeaders(
-  encodedProtected: string | undefined,
-  header: types.JWSHeaderParameters | undefined,
-  shared: VerifyShared,
-  parsedProtected?: types.JWSHeaderParameters,
-): [
-  protectedHeader: types.JWSHeaderParameters,
-  joseHeader: types.JWSHeaderParameters,
-  b64: boolean,
-  alg: string,
-] {
-  const parsedProt = parseProtectedHeader(encodedProtected, parsedProtected)
-
-  let joseHeader: types.JWSHeaderParameters
-  if (header !== undefined) {
-    if (!isDisjoint(parsedProt, header)) {
-      throw new JWSInvalid(
-        'JWS Protected and JWS Unprotected Header Parameter names must be disjoint',
-      )
-    }
-    joseHeader = { ...parsedProt, ...header }
-  } else {
-    joseHeader = parsedProt
-  }
-
-  return [parsedProt, joseHeader, ...validateJwsHeaders(parsedProt, joseHeader, shared)]
-}
-
+// RFC 7797, Section 5.3: UTF-8 octets of the unencoded JWS JSON Serialization payload.
 export function encodeJsonUnencodedPayload(payload: string): Uint8Array {
   const invalid = /[\p{Cs}\p{Cn}]/u.exec(payload)?.[0]
   if (invalid !== undefined) {
@@ -144,49 +95,15 @@ export function encodeJsonUnencodedPayload(payload: string): Uint8Array {
   return encoder.encode(payload)
 }
 
+// RFC 7797, Section 5.2: ASCII octets of the unencoded JWS Compact Serialization payload.
 function encodeCompactUnencodedPayload(payload: string): Uint8Array {
   try {
     return encode(payload)
-  } catch {
-    throw new JWSInvalid('JWS Compact Serialization payload must use only ASCII characters')
+  } catch (cause) {
+    throw new JWSInvalid('JWS Compact Serialization payload must use only ASCII characters', {
+      cause,
+    })
   }
-}
-
-async function verifyPrepared(
-  jws: types.FlattenedJWSInput,
-  shared: VerifyShared,
-  key: types.KeyInput | VerifyGetKey,
-  encodedProtected: string | undefined,
-  parsedProt: types.JWSHeaderParameters,
-  alg: string,
-  signingPayload: string | Uint8Array,
-): Promise<VerifiedSignature> {
-  let resolvedKey = false
-  if (typeof key === 'function') {
-    key = await key(parsedProt, jws)
-    resolvedKey = true
-  }
-
-  const b64 = typeof signingPayload === 'string'
-  const entry = jwsAlgorithm(alg)
-  const data = concat(
-    encodedProtected !== undefined ? encode(encodedProtected) : new Uint8Array(),
-    encode('.'),
-    b64
-      ? // A base64url payload is ASCII by definition, but it reaches here without having been
-        // decoded, so a non-ASCII one must not escape as a bare TypeError.
-        (shared[2] ??= encodeBase64url(signingPayload, 'payload', JWSInvalid))
-      : signingPayload,
-  )
-  const signature = decodeBase64url(jws.signature, 'signature', JWSInvalid)
-
-  const k = await prepareKey(entry, key, 'verify')
-  if (!(await verify(entry, k, signature, data))) {
-    throw new JWSSignatureVerificationFailed()
-  }
-
-  const payload = b64 ? decodeBase64url(signingPayload, 'payload', JWSInvalid) : signingPayload
-  return [payload, parsedProt, b64, k, resolvedKey]
 }
 
 /**
@@ -200,13 +117,28 @@ export async function verifySignature(
   encodeUnencodedPayload: (payload: string) => Uint8Array,
   parsedProtected?: types.JWSHeaderParameters,
 ): Promise<VerifiedSignature> {
-  const { protected: encodedProtected, header, payload: inputPayload } = jws
-  const [parsedProt, , b64, alg] = parseJwsHeaders(
-    encodedProtected,
-    header,
-    shared,
-    parsedProtected,
+  const { protected: encodedProtectedHeader, header, payload: inputPayload } = jws
+  const protectedHeader = parsedProtected ?? parseProtectedHeader(encodedProtectedHeader)
+
+  // RFC 7515, Section 5.2, step 4: form the JOSE Header.
+  if (!isDisjoint(protectedHeader, header)) {
+    throw new JWSInvalid(
+      'JWS Protected and JWS Unprotected Header Parameter names must be disjoint',
+    )
+  }
+  const joseHeader: types.JWSHeaderParameters = { ...protectedHeader, ...header }
+  // RFC 7515, Section 5.2, step 5: process supported Critical Header Parameters.
+  const b64 = validateB64(
+    protectedHeader,
+    validateCrit(JWSInvalid, JWS_RECOGNIZED, shared[1], protectedHeader, joseHeader),
   )
+  const { alg } = joseHeader
+  if (typeof alg !== 'string' || !alg) {
+    throw new JWSInvalid('JWS "alg" (Algorithm) Header Parameter missing or invalid')
+  }
+  if (shared[0] && !shared[0].has(alg)) {
+    throw new JOSEAlgNotAllowed('"alg" (Algorithm) Header Parameter value not allowed')
+  }
 
   if (b64) {
     if (typeof inputPayload !== 'string') {
@@ -219,7 +151,55 @@ export async function verifySignature(
   const signingPayload =
     b64 || typeof inputPayload !== 'string' ? inputPayload : encodeUnencodedPayload(inputPayload)
 
-  return verifyPrepared(jws, shared, key, encodedProtected, parsedProt, alg, signingPayload)
+  let resolvedKey = false
+  if (typeof key === 'function') {
+    key = await key(protectedHeader, jws)
+    resolvedKey = true
+  }
+
+  const entry = jwsAlgorithm(alg)
+  // RFC 7515, Section 5.2, step 8; RFC 7797, Section 3 for an unencoded payload.
+  const signingInput = concat(
+    encodedProtectedHeader !== undefined ? encode(encodedProtectedHeader) : new Uint8Array(),
+    encode('.'),
+    typeof signingPayload === 'string'
+      ? // A base64url payload is ASCII by definition, but it reaches here without having been
+        // decoded, so a non-ASCII one must not escape as a bare TypeError.
+        (shared[2] ??= encodeAsciiMember(signingPayload, 'payload', JWSInvalid))
+      : signingPayload,
+  )
+  // RFC 7515, Section 5.2, step 7: decode the JWS Signature.
+  const signature = decodeBase64url(jws.signature, 'signature', JWSInvalid)
+
+  const verificationKey = await prepareKey(entry, key, 'verify')
+  const cryptoKey = await rawKey(verificationKey, entry.subtle, 'verify')
+  if (entry.minRsaBits) checkModulusLength(entry.alg, cryptoKey)
+  let verified = false
+  try {
+    verified = await crypto.subtle.verify(
+      entry.signing,
+      cryptoKey,
+      signature as Uint8Array<ArrayBuffer>,
+      signingInput as Uint8Array<ArrayBuffer>,
+    )
+  } catch (cause) {
+    throw new JWSSignatureVerificationFailed(undefined, { cause })
+  }
+  if (!verified) {
+    throw new JWSSignatureVerificationFailed()
+  }
+
+  // RFC 7515, Section 5.2, step 6: decode the authenticated payload.
+  // Section 5.2 permits reordering steps when their dependencies are preserved.
+  const payload =
+    typeof signingPayload === 'string'
+      ? decodeBase64url(signingPayload, 'payload', JWSInvalid)
+      : signingPayload
+  const result: types.FlattenedVerifyResult & Partial<types.ResolvedKey> = { payload }
+  if (encodedProtectedHeader !== undefined) result.protectedHeader = protectedHeader
+  if (header !== undefined) result.unprotectedHeader = header
+  if (resolvedKey) return [{ ...result, key: verificationKey }, b64]
+  return [result, b64]
 }
 
 /** Splits a Compact JWS and verifies it. Every member is a string by construction. */
@@ -242,9 +222,10 @@ export async function verifyCompact(
     throw new JWSInvalid('Invalid Compact JWS')
   }
 
-  const compactJws = { payload, protected: protectedHeader, signature }
-  const parsedProt = parseProtectedHeader(protectedHeader)
-  const [b64, alg] = validateJwsHeaders(parsedProt, parsedProt, shared)
-  const signingPayload = b64 ? payload : encodeCompactUnencodedPayload(payload)
-  return verifyPrepared(compactJws, shared, key, protectedHeader, parsedProt, alg, signingPayload)
+  return verifySignature(
+    { payload, protected: protectedHeader, signature },
+    shared,
+    key,
+    encodeCompactUnencodedPayload,
+  )
 }

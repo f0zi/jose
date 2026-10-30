@@ -4,7 +4,7 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-The FlattenedSign class is used to build and sign Flattened JWS objects.
+Produces flattened JWS JSON Serialization using a digital signature or MAC.
 
 This class is exported (as a named export) from the main `'jose'` module entry point as well as
 from its subpath export `'jose/jws/flattened/sign'`.
@@ -27,13 +27,13 @@ console.log(jws)
 
 ▸ **new FlattenedSign**(`payload`): `FlattenedSign`
 
-FlattenedSign constructor
+Creates a signer for flattened JWS JSON Serialization.
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `payload` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | Binary representation of the payload to sign. |
+| `payload` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | JWS Payload bytes to sign or MAC. |
 
 #### Returns
 
@@ -45,7 +45,7 @@ FlattenedSign constructor
 
 ▸ **setProtectedHeader**(`protectedHeader`): `this`
 
-Sets the JWS Protected Header on the FlattenedSign object.
+Sets the JWS Protected Header. May only be called once.
 
 #### Parameters
 
@@ -63,7 +63,7 @@ Sets the JWS Protected Header on the FlattenedSign object.
 
 ▸ **setUnprotectedHeader**(`unprotectedHeader`): `this`
 
-Sets the JWS Unprotected Header on the FlattenedSign object.
+Sets the JWS Unprotected Header. May only be called once.
 
 #### Parameters
 
@@ -81,13 +81,14 @@ Sets the JWS Unprotected Header on the FlattenedSign object.
 
 ▸ **sign**(`key`, `options?`): [`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<[`FlattenedJWS`](../../../../types/interfaces/FlattenedJWS.md)\>
 
-Signs and resolves the value of the Flattened JWS object.
+Computes the JWS Signature (digital signature or MAC) and returns the flattened JWS JSON
+Serialization.
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `key` | [`KeyInput`](../../../../types/type-aliases/KeyInput.md) | Private Key or Secret to sign the JWS with. See [Algorithm Key Requirements](https://github.com/panva/jose/issues/210#jws-alg). |
+| `key` | [`KeyInput`](../../../../types/type-aliases/KeyInput.md) | Private key or shared secret. See [Algorithm Key Requirements](https://github.com/panva/jose/issues/210#jws-alg). |
 | `options?` | [`SignOptions`](../../../../types/interfaces/SignOptions.md) | JWS Sign options. |
 
 #### Returns

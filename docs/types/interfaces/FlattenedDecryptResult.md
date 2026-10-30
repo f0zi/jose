@@ -4,7 +4,7 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-Flattened JWE JSON Serialization Syntax decryption result
+Flattened JWE JSON Serialization decryption result.
 
 ## Properties
 
@@ -20,7 +20,7 @@ Plaintext.
 
 • `optional` **additionalAuthenticatedData?**: [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array)
 
-JWE AAD.
+Decoded JWE AAD bytes, integrity protected but not encrypted.
 
 ***
 
@@ -36,7 +36,7 @@ JWE Protected Header.
 
 • `optional` **sharedUnprotectedHeader?**: [`JWEHeaderParameters`](JWEHeaderParameters.md)
 
-JWE Shared Unprotected Header.
+JWE Shared Unprotected Header. Not integrity protected.
 
 ***
 
@@ -44,4 +44,4 @@ JWE Shared Unprotected Header.
 
 • `optional` **unprotectedHeader?**: [`JWEHeaderParameters`](JWEHeaderParameters.md)
 
-JWE Per-Recipient Unprotected Header.
+JWE Per-Recipient Unprotected Header. Not integrity protected.

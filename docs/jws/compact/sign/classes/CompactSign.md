@@ -4,7 +4,7 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-The CompactSign class is used to build and sign Compact JWS strings.
+Produces JWS Compact Serialization using a digital signature or MAC.
 
 This class is exported (as a named export) from the main `'jose'` module entry point as well as
 from its subpath export `'jose/jws/compact/sign'`.
@@ -27,13 +27,13 @@ console.log(jws)
 
 ▸ **new CompactSign**(`payload`): `CompactSign`
 
-CompactSign constructor
+Creates a signer for JWS Compact Serialization.
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `payload` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | Binary representation of the payload to sign. |
+| `payload` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | JWS Payload bytes to sign or MAC. |
 
 #### Returns
 
@@ -45,7 +45,7 @@ CompactSign constructor
 
 ▸ **setProtectedHeader**(`protectedHeader`): `this`
 
-Sets the JWS Protected Header on the CompactSign object.
+Sets the JWS Protected Header. May only be called once.
 
 #### Parameters
 
@@ -63,13 +63,14 @@ Sets the JWS Protected Header on the CompactSign object.
 
 ▸ **sign**(`key`, `options?`): [`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`string`\>
 
-Signs and resolves the value of the Compact JWS string.
+Computes the JWS Signature (digital signature or MAC) and returns the JWS Compact
+Serialization.
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `key` | [`KeyInput`](../../../../types/type-aliases/KeyInput.md) | Private Key or Secret to sign the JWS with. See [Algorithm Key Requirements](https://github.com/panva/jose/issues/210#jws-alg). |
+| `key` | [`KeyInput`](../../../../types/type-aliases/KeyInput.md) | Private key or shared secret. See [Algorithm Key Requirements](https://github.com/panva/jose/issues/210#jws-alg). |
 | `options?` | [`SignOptions`](../../../../types/interfaces/SignOptions.md) | JWS Sign options. |
 
 #### Returns

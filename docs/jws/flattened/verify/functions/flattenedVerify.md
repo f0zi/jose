@@ -8,7 +8,8 @@ Support from the community to continue maintaining and improving this module is 
 
 ▸ **flattenedVerify**(`jws`, `key`, `options?`): [`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<[`FlattenedVerifyResult`](../../../../types/interfaces/FlattenedVerifyResult.md)\>
 
-Verifies the signature and format of and afterwards decodes the Flattened JWS.
+Validates a flattened JWS JSON Serialization (digital signature or MAC) and decodes its JWS
+Payload.
 
 This function is exported (as a named export) from the main `'jose'` module entry point as well
 as from its subpath export `'jose/jws/flattened/verify'`.
@@ -18,7 +19,7 @@ as from its subpath export `'jose/jws/flattened/verify'`.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `jws` | [`FlattenedJWSInput`](../../../../types/interfaces/FlattenedJWSInput.md) | Flattened JWS. |
-| `key` | [`KeyInput`](../../../../types/type-aliases/KeyInput.md) | Key to verify the JWS with. See [Algorithm Key Requirements](https://github.com/panva/jose/issues/210#jws-alg). |
+| `key` | [`KeyInput`](../../../../types/type-aliases/KeyInput.md) | Public key or shared secret. See [Algorithm Key Requirements](https://github.com/panva/jose/issues/210#jws-alg). |
 | `options?` | [`VerifyOptions`](../../../../types/interfaces/VerifyOptions.md) | JWS Verify options. |
 
 ### Returns
@@ -46,8 +47,8 @@ console.log(decoder.decode(payload))
 
 ▸ **flattenedVerify**\<`KeyType`\>(`jws`, `getKey`, `options?`): [`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<[`FlattenedVerifyResult`](../../../../types/interfaces/FlattenedVerifyResult.md) & [`ResolvedKey`](../../../../types/interfaces/ResolvedKey.md)\<`KeyType`\>\>
 
-Verifies the signature and format of and afterwards decodes the Flattened JWS, resolving the key
-dynamically. The result additionally carries the [resolved key](../../../../types/interfaces/ResolvedKey.md#key).
+Validates a flattened JWS JSON Serialization (digital signature or MAC) and decodes its JWS
+Payload with a dynamically resolved key, included in the result.
 
 ### Type Parameters
 
@@ -60,7 +61,7 @@ dynamically. The result additionally carries the [resolved key](../../../../type
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `jws` | [`FlattenedJWSInput`](../../../../types/interfaces/FlattenedJWSInput.md) | Flattened JWS. |
-| `getKey` | [`FlattenedVerifyGetKey`](../interfaces/FlattenedVerifyGetKey.md)\<`KeyType`\> | Function resolving a key to verify the JWS with. See [Algorithm Key Requirements](https://github.com/panva/jose/issues/210#jws-alg). |
+| `getKey` | [`FlattenedVerifyGetKey`](../interfaces/FlattenedVerifyGetKey.md)\<`KeyType`\> | Resolves a public key or shared secret from unverified token data. |
 | `options?` | [`VerifyOptions`](../../../../types/interfaces/VerifyOptions.md) | JWS Verify options. |
 
 ### Returns
@@ -71,16 +72,15 @@ dynamically. The result additionally carries the [resolved key](../../../../type
 
 ▸ **flattenedVerify**(`jws`, `key`, `options?`): [`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<[`FlattenedVerifyResult`](../../../../types/interfaces/FlattenedVerifyResult.md) & [`Partial`](https://www.typescriptlang.org/docs/handbook/utility-types.html#partialtype)\<[`ResolvedKey`](../../../../types/interfaces/ResolvedKey.md)\<[`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) \| [`CryptoKey`](https://developer.mozilla.org/docs/Web/API/CryptoKey)\>\>\>
 
-Accepts either form of the `key` argument. Use this overload when forwarding a value that may be
-either a key or a key resolution function; `key` is present on the result only when a resolution
-function was used.
+Validates a flattened JWS JSON Serialization (digital signature or MAC) and decodes its JWS
+Payload using a key or key resolver. The result includes `key` only when a resolver is used.
 
 ### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `jws` | [`FlattenedJWSInput`](../../../../types/interfaces/FlattenedJWSInput.md) | Flattened JWS. |
-| `key` | [`KeyInput`](../../../../types/type-aliases/KeyInput.md) \| [`FlattenedVerifyGetKey`](../interfaces/FlattenedVerifyGetKey.md)\<[`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) \| [`CryptoKey`](https://developer.mozilla.org/docs/Web/API/CryptoKey)\> | Key, or function resolving a key, to verify the JWS with. See [Algorithm Key Requirements](https://github.com/panva/jose/issues/210#jws-alg). |
+| `key` | [`KeyInput`](../../../../types/type-aliases/KeyInput.md) \| [`FlattenedVerifyGetKey`](../interfaces/FlattenedVerifyGetKey.md)\<[`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) \| [`CryptoKey`](https://developer.mozilla.org/docs/Web/API/CryptoKey)\> | Public key or shared secret, or a function resolving one. |
 | `options?` | [`VerifyOptions`](../../../../types/interfaces/VerifyOptions.md) | JWS Verify options. |
 
 ### Returns

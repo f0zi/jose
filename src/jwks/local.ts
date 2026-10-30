@@ -5,7 +5,7 @@
  */
 
 import type * as types from '../types.d.ts'
-import { jwkToKey } from '../lib/jwk_to_key.js'
+import { jwkToKey, snapshotJwk } from '../lib/key.js'
 import { JWS } from '../lib/jws_algorithms.js'
 import type { JWSAlgorithm } from '../lib/jws_algorithms.js'
 import {
@@ -14,16 +14,16 @@ import {
   JWKSNoMatchingKey,
   JWKSMultipleMatchingKeys,
 } from '../util/errors.js'
-import { isJwkSet } from '../lib/type_checks.js'
-import { snapshotJwk } from '../lib/jwk_metadata.js'
+import { isJwkSet } from '../lib/validate.js'
 
 interface Cache {
-  [alg: string]: types.CryptoKey
+  [alg: string]: types.CryptoKey | Promise<types.CryptoKey>
 }
 
+// RFC 7515, Appendix D: key selection is application-specific. This resolver uses
+// JWK metadata (RFC 7517, Sections 4.1-4.5); AKP requires alg (RFC 9964, Section 3).
 function isUsableJWK(jwk: types.JWK, entry: JWSAlgorithm, alg: string, kid: unknown): boolean {
-  const { kty, key_ops, ext, kid: jwkKid, alg: jwkAlg, use, crv } = snapshotJwk(jwk)
-  const keyOps = Array.isArray(key_ops) ? [...key_ops] : key_ops
+  const { kty, key_ops: keyOps, ext, kid: jwkKid, alg: jwkAlg, use, crv } = jwk
 
   return (
     (ext === undefined || typeof ext === 'boolean') &&
@@ -50,20 +50,26 @@ async function importWithAlgCache(
   const cached = cache.get(jwk) || cache.set(jwk, {}).get(jwk)!
   const { alg } = entry
   if (cached[alg] === undefined) {
-    const key = await jwkToKey(entry, { ...jwk, alg, ext: true })
-
-    if (key.type !== 'public') {
-      throw new JWKSInvalid('JSON Web Key Set members must be public keys')
-    }
-
-    cached[alg] = key
+    const pending = jwkToKey(entry, jwk, true)
+      .then((key) => {
+        if (key.type !== 'public') {
+          throw new JWKSInvalid('JSON Web Key Set members must be public keys')
+        }
+        cached[alg] = key
+        return key
+      })
+      .catch((error) => {
+        if (cached[alg] === pending) delete cached[alg]
+        throw error
+      })
+    cached[alg] = pending
   }
 
   return cached[alg]
 }
 
 /**
- * The key resolution function returned by {@link createLocalJWKSet}.
+ * A key resolver created by {@link createLocalJWKSet}.
  *
  * @see {@link jwt/verify.jwtVerify jwtVerify} and the other consuming functions, all of which accept
  *   this directly.
@@ -74,29 +80,21 @@ export interface LocalJWKSet {
     token?: types.FlattenedJWSInput,
   ): Promise<types.CryptoKey>
 
-  /** Returns a structured clone of the JSON Web Key Set this resolver was created with. */
+  /** Returns a structured clone of the original JSON Web Key Set. */
   jwks: () => types.JSONWebKeySet
 }
 
 /**
- * Returns a function that resolves a JWS JOSE Header to a public key object from a locally stored,
- * or otherwise available, JSON Web Key Set. Selection respects the header's "alg" (Algorithm) and
- * "kid" (Key ID) as well as the JWK's "use" (Public Key Use) and "key_ops" (Key Operations).
- * Exactly one key must match; if multiple keys match, the thrown `JWKSMultipleMatchingKeys` can be
- * iterated.
+ * Creates a resolver for a locally available JSON Web Key Set. Selection uses the header's "alg"
+ * (Algorithm) and "kid" (Key ID), and respects the JWK's "use" (Public Key Use) and "key_ops" (Key
+ * Operations). Exactly one key must match.
  *
- * It uses the "alg" (JWS Algorithm) Header Parameter to determine the right JWK "kty" (Key Type),
- * then proceeds to match the JWK "kid" (Key ID) with one found in the JWS Header Parameters (if
- * there is one) while also respecting the JWK "use" (Public Key Use) and JWK "key_ops" (Key
- * Operations) Parameters (if they are present on the JWK).
- *
- * Only a single public key must match the selection process. As shown in the example below when
- * multiple keys get matched it is possible to opt-in to iterate over the matched keys and attempt
- * verification in an iterative manner.
+ * If multiple keys match, the thrown {@link util/errors.JWKSMultipleMatchingKeys} error exposes an
+ * async iterator over the matching keys. The example below shows how to attempt verification with
+ * each.
  *
  * > [!NOTE]\
- * > The function's purpose is to resolve public keys used for verifying signatures and will not work
- * > for public encryption keys.
+ * > Only public signature verification keys are supported, not public encryption keys.
  *
  * This function is exported (as a named export) from the main `'jose'` module entry point as well
  * as from its subpath export `'jose/jwks/local'`.
@@ -168,12 +166,21 @@ export function createLocalJWKSet(jwks: types.JSONWebKeySet): LocalJWKSet {
   let snapshot: unknown
   try {
     snapshot = structuredClone(jwks)
-  } catch {}
+  } catch (cause) {
+    throw new JWKSInvalid('JSON Web Key Set malformed', { cause })
+  }
 
   if (!isJwkSet(snapshot)) {
     throw new JWKSInvalid('JSON Web Key Set malformed')
   }
 
+  // Normalize the owned selection metadata once; keep the original keys for imports and jwks().
+  const metadata = snapshot.keys.map((jwk) => {
+    const normalized = snapshotJwk(jwk)
+    // Materialize holes so validation does not skip sparse key_ops entries.
+    if (Array.isArray(normalized.key_ops)) normalized.key_ops = [...normalized.key_ops]
+    return normalized
+  })
   const cached = new WeakMap<types.JWK, Cache>()
 
   const localJWKSet = async (
@@ -186,7 +193,9 @@ export function createLocalJWKSet(jwks: types.JSONWebKeySet): LocalJWKSet {
       throw new JOSENotSupported('Unsupported "alg" value for a JSON Web Key Set')
     }
 
-    const candidates = snapshot.keys.filter((jwk) => isUsableJWK(jwk, entry, alg!, kid))
+    const candidates = snapshot.keys.filter((_, index) =>
+      isUsableJWK(metadata[index], entry, alg!, kid),
+    )
     const { 0: jwk, length } = candidates
 
     if (!length) {

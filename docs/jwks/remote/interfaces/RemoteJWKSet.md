@@ -4,7 +4,7 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-The key resolution function returned by [createRemoteJWKSet](../functions/createRemoteJWKSet.md).
+A key resolver created by [createRemoteJWKSet](../functions/createRemoteJWKSet.md).
 
 ## See
 
@@ -13,7 +13,7 @@ The key resolution function returned by [createRemoteJWKSet](../functions/create
 
 ▸ **RemoteJWKSet**(`protectedHeader?`, `token?`): [`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<[`CryptoKey`](https://developer.mozilla.org/docs/Web/API/CryptoKey)\>
 
-The key resolution function returned by [createRemoteJWKSet](../functions/createRemoteJWKSet.md).
+A key resolver created by [createRemoteJWKSet](../functions/createRemoteJWKSet.md).
 
 ## Parameters
 
@@ -54,8 +54,8 @@ Whether the currently cached JSON Web Key Set is within its
 
 • **jwks**: () => [`JSONWebKeySet`](../../../types/interfaces/JSONWebKeySet.md) \| `undefined`
 
-The currently cached JSON Web Key Set, or `undefined` when none has been fetched or seeded via
-[jwksCache](../variables/jwksCache.md) yet.
+Returns a structured clone of the cached JSON Web Key Set, or `undefined` before keys have been
+fetched or seeded via [jwksCache](../variables/jwksCache.md).
 
 #### Returns
 

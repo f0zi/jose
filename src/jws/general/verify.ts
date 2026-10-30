@@ -2,6 +2,8 @@
  * Verifying JSON Web Signature (JWS) in General JSON Serialization
  *
  * @module
+ *
+ * @see {@link https://www.rfc-editor.org/info/rfc7515/#section-7.2.1 RFC 7515, Section 7.2.1}
  */
 
 import type * as types from '../../types.d.ts'
@@ -11,16 +13,16 @@ import {
   prepareVerify,
   snapshotJws,
   verifySignature,
-  verifyResult,
 } from '../../lib/jws_verify.js'
 import type { VerifyShared } from '../../lib/jws_verify.js'
 import { JWSInvalid, JWSSignatureVerificationFailed } from '../../util/errors.js'
-import { isObject } from '../../lib/type_checks.js'
+import { isObject } from '../../lib/validate.js'
 
 type SignatureCandidate = [
   jws: types.FlattenedJWSInput,
   protectedHeader: types.JWSHeaderParameters,
-  mode: 0 | 1 | 2,
+  /** 0: invalid b64; 1: base64url-encoded; 2: unencoded payload. */
+  payloadEncoding: 0 | 1 | 2,
 ]
 
 function snapshotSignature(
@@ -29,13 +31,7 @@ function snapshotSignature(
 ): SignatureCandidate | undefined {
   try {
     const jws = snapshotJws(signature as unknown as types.FlattenedJWSInput, [payload])
-    const { protected: encodedProtected, header, signature: encodedSignature } = jws
-    if (encodedProtected === undefined && header === undefined) return undefined
-    if (encodedProtected !== undefined && typeof encodedProtected !== 'string') return undefined
-    if (typeof encodedSignature !== 'string') return undefined
-    if (header !== undefined && !isObject<types.JWSHeaderParameters>(header)) return undefined
-
-    const protectedHeader = parseProtectedHeader(encodedProtected)
+    const protectedHeader = parseProtectedHeader(jws.protected)
 
     const { b64, crit } = protectedHeader
     return [
@@ -55,8 +51,7 @@ function snapshotSignature(
 }
 
 /**
- * Interface for General JWS Verification dynamic key resolution. No token components have been
- * verified at the time of this function call.
+ * Resolves a key for General JWS verification from unverified headers and token data.
  *
  * @typeParam KeyType Type definition of the keys the function resolves. Narrowing it is what lets
  *   {@link types.ResolvedKey.key ResolvedKey.key} be inferred at the call site.
@@ -72,18 +67,16 @@ export interface GeneralVerifyGetKey<
 > {}
 
 /**
- * Verifies the signature and format of and afterwards decodes the General JWS.
+ * Validates a JWS Signature (digital signature or MAC) from a general JWS JSON Serialization and
+ * decodes its JWS Payload.
  *
  * This function is exported (as a named export) from the main `'jose'` module entry point as well
  * as from its subpath export `'jose/jws/general/verify'`.
  *
  * > [!NOTE]\
- * > The function iterates over the `signatures` array in the General JWS and returns the verification
- * > result of the first signature entry that can be successfully verified. The result only contains
- * > the payload, protected header, and unprotected header of that successfully verified signature
- * > entry. Other signature entries' headers may be inspected solely to reject inconsistent use of the
- * > JWS Unencoded Payload Option, and their headers are not included in the returned result.
- * > Recipients of a General JWS should only rely on the returned (verified) data.
+ * > Returns payload and headers from the first signature that verifies successfully. Other entries'
+ * > headers may be inspected to reject inconsistent use of the JWS Unencoded Payload Option, but are
+ * > not included in the result. Rely only on the returned data.
  *
  * @example
  *
@@ -106,7 +99,7 @@ export interface GeneralVerifyGetKey<
  * ```
  *
  * @param jws General JWS.
- * @param key Key to verify the JWS with. See
+ * @param key Public key or shared secret. See
  *   {@link https://github.com/panva/jose/issues/210#jws-alg Algorithm Key Requirements}.
  * @param options JWS Verify options.
  */
@@ -116,12 +109,11 @@ export function generalVerify(
   options?: types.VerifyOptions,
 ): Promise<types.GeneralVerifyResult>
 /**
- * Verifies the signature and format of and afterwards decodes the General JWS, resolving the key
- * dynamically. The result additionally carries the {@link types.ResolvedKey.key resolved key}.
+ * Validates a JWS Signature (digital signature or MAC) from a general JWS JSON Serialization and
+ * decodes its JWS Payload with a dynamically resolved key, included in the result.
  *
  * @param jws General JWS.
- * @param getKey Function resolving a key to verify the JWS with. See
- *   {@link https://github.com/panva/jose/issues/210#jws-alg Algorithm Key Requirements}.
+ * @param getKey Resolves a public key or shared secret from unverified token data.
  * @param options JWS Verify options.
  */
 export function generalVerify<
@@ -132,13 +124,12 @@ export function generalVerify<
   options?: types.VerifyOptions,
 ): Promise<types.GeneralVerifyResult & types.ResolvedKey<KeyType>>
 /**
- * Accepts either form of the `key` argument. Use this overload when forwarding a value that may be
- * either a key or a key resolution function; `key` is present on the result only when a resolution
- * function was used.
+ * Validates a JWS Signature (digital signature or MAC) from a general JWS JSON Serialization and
+ * decodes its JWS Payload using a key or key resolver. The result includes `key` only when a
+ * resolver is used.
  *
  * @param jws General JWS.
- * @param key Key, or function resolving a key, to verify the JWS with. See
- *   {@link https://github.com/panva/jose/issues/210#jws-alg Algorithm Key Requirements}.
+ * @param key Public key or shared secret, or a function resolving one.
  * @param options JWS Verify options.
  */
 export function generalVerify(
@@ -179,20 +170,27 @@ export async function generalVerify(
     .map((signature) => snapshotSignature(signature, payload))
     .filter((candidate): candidate is SignatureCandidate => candidate !== undefined)
 
-  let modes = 0
-  for (const [, , mode] of candidates) {
-    modes |= mode
-    if (modes === 3) {
+  // RFC 7797, Section 3: reject differing b64 values across signatures.
+  let payloadEncodings = 0
+  for (const [, , payloadEncoding] of candidates) {
+    payloadEncodings |= payloadEncoding
+    if (payloadEncodings === 3) {
       throw new JWSInvalid('inconsistent use of JWS Unencoded Payload (RFC7797)')
     }
   }
 
+  // RFC 7515, Section 5.2, steps 9-10: at least one signature must validate.
+  // Returning the first valid signature is this API’s selection policy.
   for (const candidate of candidates) {
     try {
-      return verifyResult(
+      const [result] = await verifySignature(
         candidate[0],
-        await verifySignature(candidate[0], shared, key, encodeJsonUnencodedPayload, candidate[1]),
+        shared,
+        key,
+        encodeJsonUnencodedPayload,
+        candidate[1],
       )
+      return result
     } catch {
       //
     }

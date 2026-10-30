@@ -2,6 +2,50 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [6.2.14](https://github.com/panva/jose/compare/v6.2.13...v6.2.14) (2026-10-29)
+
+### Fixes
+
+* **types:** preserve contextual JWT payload inference ([0dbf7a0](https://github.com/panva/jose/commit/0dbf7a0d279ab0ad6a31b90bf76d7765a05e5f60)), closes [#911](https://github.com/panva/jose/issues/911)
+
+## [6.2.13](https://github.com/panva/jose/compare/v6.2.12...v6.2.13) (2026-10-20)
+
+### Refactor
+
+* align terminology with JOSE specifications ([bafcb74](https://github.com/panva/jose/commit/bafcb74f5fc070f4f5fd48b12c8bb90af832385e))
+* preserve underlying error causes ([724ba24](https://github.com/panva/jose/commit/724ba24b5aaa205000ff33f0a5a393879fd77758)), closes [#908](https://github.com/panva/jose/issues/908)
+
+## [6.2.12](https://github.com/panva/jose/compare/v6.2.11...v6.2.12) (2026-09-05)
+
+### Documentation
+
+* clarify and shorten public API guidance ([be62530](https://github.com/panva/jose/commit/be62530328431519950a2b6a09ccd1c7de8a38f9))
+
+### Refactor
+
+* simplify JWS and JWE operation cores ([92e9640](https://github.com/panva/jose/commit/92e9640290085dd37c152aeb7c4d5b22e9df96ab))
+
+### Performance
+
+* avoid copying AES-GCM output ([6925d43](https://github.com/panva/jose/commit/6925d43e05c7d05b0c801fda9eb1835bb8d334ef))
+* deduplicate pending jwks key imports ([bf5138b](https://github.com/panva/jose/commit/bf5138b12bf9f8b7dc18f4b26ad1b7395e7e5dd6))
+* encode single-signature JWS input once ([7bc9a33](https://github.com/panva/jose/commit/7bc9a3380a7436197bb5d6b377ca232094541c5c))
+* normalize General JWE shared headers once ([78637bd](https://github.com/panva/jose/commit/78637bd28031869df8a01cbcd82273c115860e35))
+* normalize jwks selection metadata once ([fd3ae3f](https://github.com/panva/jose/commit/fd3ae3f06efd4760df2631f1b0a08eb4fc448efd))
+* use native encoding for larger ASCII strings ([b23a6f3](https://github.com/panva/jose/commit/b23a6f378b26e960900761c244a5f383af22dddc))
+
+## [6.2.11](https://github.com/panva/jose/compare/v6.2.10...v6.2.11) (2026-09-04)
+
+### Documentation
+
+* render subpath indexes as tables ([94589ee](https://github.com/panva/jose/commit/94589ee9efe6cf257a133765d753bbe8d55f6ed3))
+* shorten API index descriptions ([681482f](https://github.com/panva/jose/commit/681482fcca7577c6a4b8df61c992f195f6e6ac1b))
+
+### Refactor
+
+* model JWE key management modes ([e01dda6](https://github.com/panva/jose/commit/e01dda65d5d272c8dd44710d0c70673c1530038e))
+* **types:** reduce declaration repetition ([55b970f](https://github.com/panva/jose/commit/55b970fc08c9082041f40473470ee0fe0e8b0087))
+
 ## [6.2.10](https://github.com/panva/jose/compare/v6.2.9...v6.2.10) (2026-08-21)
 
 ### Fixes

@@ -4,17 +4,14 @@
  * @module
  */
 
-import { digest } from '../lib/helpers.js'
+import { digest, encode } from '../lib/buffer_utils.js'
 import { encode as b64u } from '../util/base64url.js'
-
 import { JOSENotSupported, JWKInvalid } from '../util/errors.js'
-import { encode } from '../lib/buffer_utils.js'
-import type * as types from '../types.d.ts'
-import { isKeyLike } from '../lib/is_key_like.js'
-import { isObject } from '../lib/type_checks.js'
+import { isKeyLike, invalidKeyInput, snapshotJwk } from '../lib/key.js'
+import { isObject } from '../lib/validate.js'
 import { exportJWK } from '../key/export.js'
-import { invalidKeyInput } from '../lib/invalid_key_input.js'
-import { snapshotJwk } from '../lib/jwk_metadata.js'
+
+import type * as types from '../types.d.ts'
 
 const check = (value: unknown, description: string) => {
   if (typeof value !== 'string' || !value) {
@@ -23,7 +20,7 @@ const check = (value: unknown, description: string) => {
 }
 
 /**
- * Calculates a base64url-encoded JSON Web Key (JWK) Thumbprint
+ * Calculates a base64url-encoded JWK Thumbprint. CryptoKey inputs must be extractable.
  *
  * This function is exported (as a named export) from the main `'jose'` module entry point as well
  * as from its subpath export `'jose/jwk/thumbprint'`.
@@ -43,10 +40,9 @@ const check = (value: unknown, description: string) => {
  * ```
  *
  * @param key Key to calculate the thumbprint for.
- * @param digestAlgorithm Digest Algorithm to use for calculating the thumbprint. Default is
- *   "sha256".
+ * @param digestAlgorithm Digest algorithm. Defaults to "sha256".
  *
- * @see {@link https://www.rfc-editor.org/info/rfc7638/ RFC7638}
+ * @see {@link https://www.rfc-editor.org/info/rfc7638/#section-3 RFC 7638, Section 3}
  */
 export async function calculateJwkThumbprint(
   key: types.JWK | types.CryptoKey | types.KeyObject,
@@ -74,45 +70,49 @@ export async function calculateJwkThumbprint(
     throw new TypeError('digestAlgorithm must one of "sha256", "sha384", or "sha512"')
   }
 
-  let components: types.JWK
+  // RFC 7638, Section 3, step 1 and Section 3.2: required members in lexicographic order.
+  let requiredMembers: types.JWK
   switch (jwk.kty) {
+    // RFC 9964, Section 6: AKP thumbprints include alg, kty and pub.
     case 'AKP':
       check(jwk.alg, '"alg" (Algorithm) Parameter')
       check(jwk.pub, '"pub" (Public key) Parameter')
-      components = { alg: jwk.alg, kty: jwk.kty, pub: jwk.pub }
+      requiredMembers = { alg: jwk.alg, kty: jwk.kty, pub: jwk.pub }
       break
     case 'EC':
       check(jwk.crv, '"crv" (Curve) Parameter')
       check(jwk.x, '"x" (X Coordinate) Parameter')
       check(jwk.y, '"y" (Y Coordinate) Parameter')
-      components = { crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y }
+      requiredMembers = { crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y }
       break
+    // RFC 8037, Section 2: OKP thumbprints include crv, kty and x.
     case 'OKP':
       check(jwk.crv, '"crv" (Subtype of Key Pair) Parameter')
       check(jwk.x, '"x" (Public Key) Parameter')
-      components = { crv: jwk.crv, kty: jwk.kty, x: jwk.x }
+      requiredMembers = { crv: jwk.crv, kty: jwk.kty, x: jwk.x }
       break
     case 'RSA':
       check(jwk.e, '"e" (Exponent) Parameter')
       check(jwk.n, '"n" (Modulus) Parameter')
-      components = { e: jwk.e, kty: jwk.kty, n: jwk.n }
+      requiredMembers = { e: jwk.e, kty: jwk.kty, n: jwk.n }
       break
     case 'oct':
       if (typeof jwk.k !== 'string') {
         throw new JWKInvalid('"k" (Key Value) Parameter missing or invalid')
       }
-      components = { k: jwk.k, kty: jwk.kty }
+      requiredMembers = { k: jwk.k, kty: jwk.kty }
       break
     default:
       throw new JOSENotSupported('"kty" (Key Type) Parameter missing or unsupported')
   }
 
-  const data = encode(JSON.stringify(components))
-  return b64u(await digest(digestAlgorithm, data))
+  // RFC 7638, Section 3, step 2: hash the UTF-8 representation (ASCII for these members).
+  const thumbprintInput = encode(JSON.stringify(requiredMembers))
+  return b64u(await digest(digestAlgorithm, thumbprintInput))
 }
 
 /**
- * Calculates a JSON Web Key (JWK) Thumbprint URI
+ * Calculates a JWK Thumbprint URI. CryptoKey inputs must be extractable.
  *
  * This function is exported (as a named export) from the main `'jose'` module entry point as well
  * as from its subpath export `'jose/jwk/thumbprint'`.
@@ -132,10 +132,9 @@ export async function calculateJwkThumbprint(
  * ```
  *
  * @param key Key to calculate the thumbprint for.
- * @param digestAlgorithm Digest Algorithm to use for calculating the thumbprint. Default is
- *   "sha256".
+ * @param digestAlgorithm Digest algorithm. Defaults to "sha256".
  *
- * @see {@link https://www.rfc-editor.org/info/rfc9278/ RFC9278}
+ * @see {@link https://www.rfc-editor.org/info/rfc9278/#section-3 RFC 9278, Section 3}
  */
 export async function calculateJwkThumbprintUri(
   key: types.CryptoKey | types.KeyObject | types.JWK,
@@ -143,5 +142,6 @@ export async function calculateJwkThumbprintUri(
 ): Promise<string> {
   digestAlgorithm ??= 'sha256'
   const thumbprint = await calculateJwkThumbprint(key, digestAlgorithm)
+  // RFC 9278, Sections 3-4: URI namespace, registered hash name, and encoded thumbprint.
   return `urn:ietf:params:oauth:jwk-thumbprint:sha-${digestAlgorithm.slice(-3)}:${thumbprint}`
 }

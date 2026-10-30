@@ -2,22 +2,22 @@
  * Verifying JSON Web Signature (JWS) in Flattened JSON Serialization
  *
  * @module
+ *
+ * @see {@link https://www.rfc-editor.org/info/rfc7515/#section-7.2.2 RFC 7515, Section 7.2.2}
  */
 
 import type * as types from '../../types.d.ts'
 import { JWSInvalid } from '../../util/errors.js'
-import { isObject } from '../../lib/type_checks.js'
+import { isObject } from '../../lib/validate.js'
 import {
   encodeJsonUnencodedPayload,
   prepareVerify,
   snapshotJws,
   verifySignature,
-  verifyResult,
 } from '../../lib/jws_verify.js'
 
 /**
- * Interface for Flattened JWS Verification dynamic key resolution. No token components have been
- * verified at the time of this function call.
+ * Resolves a key for Flattened JWS verification from unverified headers and token data.
  *
  * @typeParam KeyType Type definition of the keys the function resolves. Narrowing it is what lets
  *   {@link types.ResolvedKey.key ResolvedKey.key} be inferred at the call site.
@@ -33,7 +33,8 @@ export interface FlattenedVerifyGetKey<
 > {}
 
 /**
- * Verifies the signature and format of and afterwards decodes the Flattened JWS.
+ * Validates a flattened JWS JSON Serialization (digital signature or MAC) and decodes its JWS
+ * Payload.
  *
  * This function is exported (as a named export) from the main `'jose'` module entry point as well
  * as from its subpath export `'jose/jws/flattened/verify'`.
@@ -56,7 +57,7 @@ export interface FlattenedVerifyGetKey<
  * ```
  *
  * @param jws Flattened JWS.
- * @param key Key to verify the JWS with. See
+ * @param key Public key or shared secret. See
  *   {@link https://github.com/panva/jose/issues/210#jws-alg Algorithm Key Requirements}.
  * @param options JWS Verify options.
  */
@@ -66,12 +67,11 @@ export function flattenedVerify(
   options?: types.VerifyOptions,
 ): Promise<types.FlattenedVerifyResult>
 /**
- * Verifies the signature and format of and afterwards decodes the Flattened JWS, resolving the key
- * dynamically. The result additionally carries the {@link types.ResolvedKey.key resolved key}.
+ * Validates a flattened JWS JSON Serialization (digital signature or MAC) and decodes its JWS
+ * Payload with a dynamically resolved key, included in the result.
  *
  * @param jws Flattened JWS.
- * @param getKey Function resolving a key to verify the JWS with. See
- *   {@link https://github.com/panva/jose/issues/210#jws-alg Algorithm Key Requirements}.
+ * @param getKey Resolves a public key or shared secret from unverified token data.
  * @param options JWS Verify options.
  */
 export function flattenedVerify<
@@ -82,13 +82,11 @@ export function flattenedVerify<
   options?: types.VerifyOptions,
 ): Promise<types.FlattenedVerifyResult & types.ResolvedKey<KeyType>>
 /**
- * Accepts either form of the `key` argument. Use this overload when forwarding a value that may be
- * either a key or a key resolution function; `key` is present on the result only when a resolution
- * function was used.
+ * Validates a flattened JWS JSON Serialization (digital signature or MAC) and decodes its JWS
+ * Payload using a key or key resolver. The result includes `key` only when a resolver is used.
  *
  * @param jws Flattened JWS.
- * @param key Key, or function resolving a key, to verify the JWS with. See
- *   {@link https://github.com/panva/jose/issues/210#jws-alg Algorithm Key Requirements}.
+ * @param key Public key or shared secret, or a function resolving one.
  * @param options JWS Verify options.
  */
 export function flattenedVerify(
@@ -106,29 +104,11 @@ export async function flattenedVerify(
   }
 
   const snapshot = snapshotJws(jws)
-
-  if (snapshot.protected === undefined && snapshot.header === undefined) {
-    throw new JWSInvalid('Flattened JWS must have either of the "protected" or "header" members')
-  }
-
-  if (snapshot.protected !== undefined && typeof snapshot.protected !== 'string') {
-    throw new JWSInvalid('JWS Protected Header incorrect type')
-  }
-
-  if (snapshot.payload === undefined) {
-    throw new JWSInvalid('JWS Payload missing')
-  }
-
-  if (typeof snapshot.signature !== 'string') {
-    throw new JWSInvalid('JWS Signature missing or incorrect type')
-  }
-
-  if (snapshot.header !== undefined && !isObject(snapshot.header)) {
-    throw new JWSInvalid('JWS Unprotected Header incorrect type')
-  }
-
-  return verifyResult(
+  const [result] = await verifySignature(
     snapshot,
-    await verifySignature(snapshot, prepareVerify(options), key, encodeJsonUnencodedPayload),
+    prepareVerify(options),
+    key,
+    encodeJsonUnencodedPayload,
   )
+  return result
 }

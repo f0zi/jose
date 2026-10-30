@@ -2,47 +2,45 @@
  * Signing JSON Web Signature (JWS) in General JSON Serialization
  *
  * @module
+ *
+ * @see {@link https://www.rfc-editor.org/info/rfc7515/#section-7.2.1 RFC 7515, Section 7.2.1}
  */
 
 import type * as types from '../../types.d.ts'
 import { createSignature } from '../../lib/jws_sign.js'
 import type { SignInput } from '../../lib/jws_sign.js'
 import { JWSInvalid } from '../../util/errors.js'
-import { assertNotSet } from '../../lib/helpers.js'
+import { assertNotSet, assertUint8Array } from '../../lib/validate.js'
 
-/** Used to build General JWS object's individual signatures. */
+/** Configures an individual JWS Signature (digital signature or MAC) in a General JWS. */
 export interface Signature {
   /**
-   * Sets the JWS Protected Header on the Signature object.
+   * Sets the JWS Protected Header. May only be called once.
    *
    * @param protectedHeader JWS Protected Header.
    */
   setProtectedHeader(protectedHeader: types.JWSHeaderParameters): Signature
 
   /**
-   * Sets the JWS Unprotected Header on the Signature object.
+   * Sets the JWS Unprotected Header. May only be called once.
    *
    * @param unprotectedHeader JWS Unprotected Header.
    */
   setUnprotectedHeader(unprotectedHeader: types.JWSHeaderParameters): Signature
 
   /**
-   * A shorthand for calling {@link GeneralSign.addSignature addSignature()} on the enclosing
-   * {@link GeneralSign} instance.
+   * Adds another signature to the enclosing {@link GeneralSign} and returns its configuration.
    *
-   * @param key Private Key or Secret to sign the individual JWS signature with. See
+   * @param key Private key or shared secret. See
    *   {@link https://github.com/panva/jose/issues/210#jws-alg Algorithm Key Requirements}.
    * @param options JWS Sign options.
    */
   addSignature(key: types.KeyInput, options?: types.SignOptions): Signature
 
-  /**
-   * A shorthand for calling {@link GeneralSign.sign sign()} on the enclosing {@link GeneralSign}
-   * instance. Takes no arguments — each signature's key is supplied to {@link addSignature}.
-   */
+  /** Computes all JWS Signatures on the enclosing {@link GeneralSign}, using their configured keys. */
   sign(): Promise<types.GeneralJWS>
 
-  /** Returns the enclosing {@link GeneralSign} instance */
+  /** Returns the enclosing {@link GeneralSign} instance. */
   done(): GeneralSign
 }
 
@@ -89,7 +87,7 @@ class IndividualSignature implements Signature {
 }
 
 /**
- * The GeneralSign class is used to build and sign General JWS objects.
+ * Produces general JWS JSON Serialization using digital signatures or MACs.
  *
  * This class is exported (as a named export) from the main `'jose'` module entry point as well as
  * from its subpath export `'jose/jws/general/sign'`.
@@ -115,18 +113,18 @@ export class GeneralSign {
   #signatures: IndividualSignature[] = []
 
   /**
-   * {@link GeneralSign} constructor
+   * Creates a signer for general JWS JSON Serialization.
    *
-   * @param payload Binary representation of the payload to sign.
+   * @param payload JWS Payload bytes to sign or MAC.
    */
   constructor(payload: Uint8Array) {
     this.#payload = payload
   }
 
   /**
-   * Adds an additional signature for the General JWS object.
+   * Adds a signature and returns its configuration.
    *
-   * @param key Private Key or Secret to sign the individual JWS signature with. See
+   * @param key Private key or shared secret. See
    *   {@link https://github.com/panva/jose/issues/210#jws-alg Algorithm Key Requirements}.
    * @param options JWS Sign options.
    */
@@ -136,46 +134,41 @@ export class GeneralSign {
     return signature
   }
 
-  /** Signs and resolves the value of the General JWS object. */
+  /**
+   * Computes each JWS Signature (digital signature or MAC) and returns the general JWS JSON
+   * Serialization.
+   */
   async sign(): Promise<types.GeneralJWS> {
     if (!this.#signatures.length) {
       throw new JWSInvalid('at least one signature must be added')
     }
 
-    if (!(this.#payload instanceof Uint8Array)) {
-      throw new TypeError('payload must be an instance of Uint8Array')
-    }
+    assertUint8Array(this.#payload, 'payload')
 
     const jws: types.GeneralJWS = {
       signatures: [],
       payload: '',
     }
 
-    const encoded: NonNullable<SignInput['encoded']> = []
+    const encodedPayloadCache: NonNullable<SignInput[4]> = []
     let b64: boolean | undefined
 
-    for (let i = 0; i < this.#signatures.length; i++) {
-      const signature = this.#signatures[i]
+    for (const signature of this.#signatures) {
       const [protectedHeader, unprotectedHeader, key, crit] = signature.state
 
-      const [{ payload, ...rest }, signatureB64] = await createSignature(
-        {
-          payload: this.#payload,
-          protectedHeader,
-          unprotectedHeader,
-          crit,
-          encoded,
-        },
+      const [{ payload, ...signatureMembers }, signatureB64] = await createSignature(
+        [this.#payload, protectedHeader, unprotectedHeader, crit, encodedPayloadCache],
         key,
       )
 
+      // RFC 7797, Section 3: every signature must use the same b64 value.
       if (b64 === undefined) {
         b64 = signatureB64
         jws.payload = payload
       } else if (b64 !== signatureB64) {
         throw new JWSInvalid('inconsistent use of JWS Unencoded Payload (RFC7797)')
       }
-      jws.signatures.push(rest)
+      jws.signatures.push(signatureMembers)
     }
 
     return jws

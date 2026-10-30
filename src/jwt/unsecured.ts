@@ -7,13 +7,18 @@
 import * as b64u from '../util/base64url.js'
 
 import type * as types from '../types.d.ts'
-import { decodeBase64url, parseJoseHeader } from '../lib/helpers.js'
+import {
+  decodeBase64url,
+  parseJoseHeader,
+  JWS_RECOGNIZED,
+  validateB64,
+  validateCrit,
+} from '../lib/validate.js'
 import { JWSInvalid, JWTInvalid } from '../util/errors.js'
-import { validateClaimsSet, JWTClaimsBuilder, jwtData } from '../lib/jwt_claims_set.js'
-import { JWS_RECOGNIZED, validateB64, validateCrit } from '../lib/options.js'
+import { validateClaimsSet, JWTClaimsBuilder, jwtClaimsSetBytes } from '../lib/jwt_claims_set.js'
 
 /**
- * Result of decoding an Unsecured JWT.
+ * Decoded Unsecured JWT.
  *
  * @typeParam PayloadType Type definition of the JWT Claims Set the token is expected to carry.
  */
@@ -23,19 +28,15 @@ export interface UnsecuredResult<PayloadType = types.JWTPayload> {
     types.JWTPayload &
     ([PayloadType] extends [object] ? unknown : unknown extends PayloadType ? unknown : never)
 
-  /** The decoded JOSE Header; always `{ "alg": "none" }` for an Unsecured JWT. */
+  /** The decoded JOSE Header; its "alg" (Algorithm) Header Parameter is "none". */
   header: types.JWSHeaderParameters
 }
 
-/**
- * UnsecuredJWT constructor
- *
- * @param payload The JWT Claims Set object. Defaults to an empty object.
- */
+/** @param payload Initial JWT Claims Set. Defaults to an empty object. */
 const UnsecuredJWT_base: new (payload?: types.JWTPayload) => types.ProduceJWT = JWTClaimsBuilder
 
 /**
- * The UnsecuredJWT class is a utility for dealing with `{ "alg": "none" }` Unsecured JWTs.
+ * Encodes and decodes `{ "alg": "none" }` Unsecured JWTs.
  *
  * This class is exported (as a named export) from the main `'jose'` module entry point as well as
  * from its subpath export `'jose/jwt/unsecured'`.
@@ -74,14 +75,29 @@ export class UnsecuredJWT extends UnsecuredJWT_base {
 
   /** Encodes the Unsecured JWT. */
   encode(): string {
-    const header = b64u.encode(JSON.stringify({ alg: 'none' }))
-    const payload = b64u.encode(jwtData(this))
+    // RFC 7519, Section 6; RFC 7518, Section 3.6: none and an empty JWS Signature.
+    const encodedProtectedHeader = b64u.encode(JSON.stringify({ alg: 'none' }))
+    const encodedPayload = b64u.encode(jwtClaimsSetBytes(this))
 
-    return `${header}.${payload}.`
+    return `${encodedProtectedHeader}.${encodedPayload}.`
   }
 
   /**
-   * Decodes an unsecured JWT.
+   * Decodes an unsecured JWT and validates its claims without authenticating the token.
+   *
+   * @ignore
+   */
+  static decode<PayloadType, InferredPayloadType>(
+    jwt: string,
+    options?: types.JWTClaimVerificationOptions,
+  ): types.InferredJWTResult<
+    UnsecuredResult<unknown>,
+    InferredPayloadType &
+      ([PayloadType] extends [object] ? unknown : unknown extends PayloadType ? unknown : never)
+  >
+
+  /**
+   * Decodes an unsecured JWT and validates its claims without authenticating the token.
    *
    * @param jwt Unsecured JWT to decode the payload of.
    * @param options JWT Claims Set validation options.
@@ -89,7 +105,8 @@ export class UnsecuredJWT extends UnsecuredJWT_base {
   static decode<PayloadType = types.JWTPayload>(
     jwt: string,
     options?: types.JWTClaimVerificationOptions,
-  ): UnsecuredResult<PayloadType> {
+  ): UnsecuredResult<PayloadType>
+  static decode(jwt: string, options?: types.JWTClaimVerificationOptions) {
     if (typeof jwt !== 'string') {
       throw new JWTInvalid('Unsecured JWT must be a string')
     }
@@ -115,6 +132,7 @@ export class UnsecuredJWT extends UnsecuredJWT_base {
     if (header.alg !== 'none') {
       throw new JWTInvalid('Invalid Unsecured JWT')
     }
+    // RFC 7797, Section 7: JWTs must not use the unencoded payload option.
     if (!b64) {
       throw new JWTInvalid('JWTs MUST NOT use unencoded payload')
     }
@@ -123,7 +141,7 @@ export class UnsecuredJWT extends UnsecuredJWT_base {
       header,
       decodeBase64url(encodedPayload, 'payload', JWTInvalid),
       options,
-    ) as UnsecuredResult<PayloadType>['payload']
+    )
 
     return { payload, header }
   }

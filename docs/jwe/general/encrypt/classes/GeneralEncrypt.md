@@ -4,7 +4,7 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-The GeneralEncrypt class is used to build and encrypt General JWE objects.
+Produces general JWE JSON Serialization using authenticated encryption.
 
 This class is exported (as a named export) from the main `'jose'` module entry point as well as
 from its subpath export `'jose/jwe/general/encrypt'`.
@@ -31,7 +31,7 @@ console.log(jwe)
 
 ▸ **new GeneralEncrypt**(`plaintext`): `GeneralEncrypt`
 
-GeneralEncrypt constructor
+Creates an encryptor for general JWE JSON Serialization.
 
 #### Parameters
 
@@ -49,13 +49,13 @@ GeneralEncrypt constructor
 
 ▸ **addRecipient**(`key`, `options?`): [`Recipient`](../interfaces/Recipient.md)
 
-Adds an additional recipient for the General JWE object.
+Adds a recipient and returns its configuration.
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `key` | [`KeyInput`](../../../../types/type-aliases/KeyInput.md) | Public Key or Secret to encrypt the Content Encryption Key for the recipient with. See [Algorithm Key Requirements](https://github.com/panva/jose/issues/210#jwe-alg). |
+| `key` | [`KeyInput`](../../../../types/type-aliases/KeyInput.md) | Public key or shared secret. See [Algorithm Key Requirements](https://github.com/panva/jose/issues/210#jwe-alg). |
 | `options?` | [`CritOption`](../../../../types/interfaces/CritOption.md) | JWE Encryption options. |
 
 #### Returns
@@ -68,7 +68,7 @@ Adds an additional recipient for the General JWE object.
 
 ▸ **encrypt**(): [`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<[`GeneralJWE`](../../../../types/interfaces/GeneralJWE.md)\>
 
-Encrypts and resolves the value of the General JWE object.
+Encrypts the plaintext and returns the general JWE JSON Serialization.
 
 #### Returns
 
@@ -80,13 +80,17 @@ Encrypts and resolves the value of the General JWE object.
 
 ▸ **setAdditionalAuthenticatedData**(`aad`): `this`
 
-Sets the Additional Authenticated Data on the GeneralEncrypt object.
+Sets the JWE AAD, which is integrity protected but not encrypted.
+
+Its base64url encoding is combined with the Encoded Protected Header to form the Additional
+Authenticated Data encryption parameter. See
+[draft-ietf-jose-hpke-encrypt-22, Section 7.1, step 15](https://www.ietf.org/archive/id/draft-ietf-jose-hpke-encrypt-22.html#section-7.1).
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `aad` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | Additional Authenticated Data. |
+| `aad` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | JWE Additional Authenticated Data (JWE AAD). |
 
 #### Returns
 
@@ -98,7 +102,7 @@ Sets the Additional Authenticated Data on the GeneralEncrypt object.
 
 ▸ **setProtectedHeader**(`protectedHeader`): `this`
 
-Sets the JWE Protected Header on the GeneralEncrypt object.
+Sets the JWE Protected Header. May only be called once.
 
 #### Parameters
 
@@ -116,7 +120,7 @@ Sets the JWE Protected Header on the GeneralEncrypt object.
 
 ▸ **setSharedUnprotectedHeader**(`sharedUnprotectedHeader`): `this`
 
-Sets the JWE Shared Unprotected Header on the GeneralEncrypt object.
+Sets the JWE Shared Unprotected Header. May only be called once.
 
 #### Parameters
 

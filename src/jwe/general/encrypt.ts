@@ -2,57 +2,55 @@
  * Encrypting JSON Web Encryption (JWE) in General JSON Serialization
  *
  * @module
+ *
+ * @see {@link https://www.rfc-editor.org/info/rfc7516/#section-7.2.1 RFC 7516, Section 7.2.1}
  */
 
 import type * as types from '../../types.d.ts'
-import { assertNotSet } from '../../lib/helpers.js'
+import { assertNotSet, assertUint8Array } from '../../lib/validate.js'
 import { JWEInvalid } from '../../util/errors.js'
 import { generateCek } from '../../lib/content_encryption.js'
-import { encryptKeyManagement } from '../../lib/key_management.js'
 import { encode as b64u } from '../../util/base64url.js'
-import { checkDisjoint, checkEncryptHeaders, createJWE, encryptJWE } from '../../lib/jwe_encrypt.js'
+import { checkDisjoint, checkEncryptHeaders, encryptJWE } from '../../lib/jwe_encrypt.js'
+import { encryptKeyManagement } from '../../lib/key_management.js'
 import type { CheckedHeaders, EncryptInput } from '../../lib/jwe_encrypt.js'
-import { prepareKey } from '../../lib/key.js'
-import { jweAlgorithm } from '../../lib/jwe_algorithms.js'
-import { assertUint8Array } from '../../lib/type_checks.js'
+import { isJWECEKTransport, jweAlgorithm } from '../../lib/jwe_algorithms.js'
+import type { JWECEKTransportAlgorithm } from '../../lib/jwe_algorithms.js'
 
-/** Used to build General JWE object's individual recipients. */
+/** Configures an individual recipient in a General JWE. */
 export interface Recipient {
   /**
-   * Sets the JWE Per-Recipient Unprotected Header on the Recipient object.
+   * Sets the JWE Per-Recipient Unprotected Header. May only be called once.
    *
    * @param unprotectedHeader JWE Per-Recipient Unprotected Header.
    */
   setUnprotectedHeader(unprotectedHeader: types.JWEHeaderParameters): Recipient
 
   /**
-   * Sets the JWE Key Management parameters to be used when encrypting. Use this method instead of
-   * the header setters to configure algorithm inputs such as ECDH-ES "apu" (Agreement PartyUInfo)
-   * and "apv" (Agreement PartyVInfo), or PBES2 "p2c" (PBES2 Count). The parameters are added to the
-   * appropriate JOSE Header.
+   * Sets key management inputs such as ECDH-ES "apu"/"apv" or PBES2 "p2c". Use this method instead
+   * of header setters; the resulting parameters are added to the JOSE Header. May only be called
+   * once.
    *
    * @param parameters JWE Key Management parameters.
    */
   setKeyManagementParameters(parameters: types.JWEKeyManagementHeaderParameters): Recipient
 
   /**
-   * A shorthand for calling {@link GeneralEncrypt.addRecipient addRecipient()} on the enclosing
-   * {@link GeneralEncrypt} instance.
+   * Adds another recipient to the enclosing {@link GeneralEncrypt} and returns its configuration.
    *
-   * @param key Public Key or Secret to encrypt the Content Encryption Key for the recipient with.
-   *   See {@link https://github.com/panva/jose/issues/210#jwe-alg Algorithm Key Requirements}.
+   * @param key Public key or shared secret. See
+   *   {@link https://github.com/panva/jose/issues/210#jwe-alg Algorithm Key Requirements}.
    * @param options JWE Encryption options.
    */
   addRecipient(key: types.KeyInput, options?: types.CritOption): Recipient
 
   /**
-   * A shorthand for calling {@link GeneralEncrypt.encrypt encrypt()} on the enclosing
-   * {@link GeneralEncrypt} instance. Takes no arguments — each recipient's key is supplied to
-   * {@link addRecipient}.
+   * Encrypts for all recipients on the enclosing {@link GeneralEncrypt}, using their configured
+   * keys.
    */
   encrypt(): Promise<types.GeneralJWE>
 
-  /** Returns the enclosing {@link GeneralEncrypt} instance */
+  /** Returns the enclosing {@link GeneralEncrypt} instance. */
   done(): GeneralEncrypt
 }
 
@@ -97,20 +95,8 @@ class IndividualRecipient implements Recipient {
   }
 }
 
-function copyOptionalMembers(
-  flattened: types.FlattenedJWE,
-  jwe: types.GeneralJWE,
-  recipient: types.GeneralJWE['recipients'][number],
-) {
-  const { aad, protected: protectedHeader, unprotected, header } = flattened
-  if (aad) jwe.aad = aad
-  if (protectedHeader) jwe.protected = protectedHeader
-  if (unprotected) jwe.unprotected = unprotected
-  if (header) recipient.header = header
-}
-
 /**
- * The GeneralEncrypt class is used to build and encrypt General JWE objects.
+ * Produces general JWE JSON Serialization using authenticated encryption.
  *
  * This class is exported (as a named export) from the main `'jose'` module entry point as well as
  * from its subpath export `'jose/jwe/general/encrypt'`.
@@ -138,12 +124,12 @@ export class GeneralEncrypt {
 
   #protectedHeader!: types.JWEHeaderParameters
 
-  #unprotectedHeader!: types.JWEHeaderParameters
+  #sharedUnprotectedHeader!: types.JWEHeaderParameters
 
   #aad!: Uint8Array
 
   /**
-   * {@link GeneralEncrypt} constructor
+   * Creates an encryptor for general JWE JSON Serialization.
    *
    * @param plaintext Binary representation of the plaintext to encrypt.
    */
@@ -152,10 +138,10 @@ export class GeneralEncrypt {
   }
 
   /**
-   * Adds an additional recipient for the General JWE object.
+   * Adds a recipient and returns its configuration.
    *
-   * @param key Public Key or Secret to encrypt the Content Encryption Key for the recipient with.
-   *   See {@link https://github.com/panva/jose/issues/210#jwe-alg Algorithm Key Requirements}.
+   * @param key Public key or shared secret. See
+   *   {@link https://github.com/panva/jose/issues/210#jwe-alg Algorithm Key Requirements}.
    * @param options JWE Encryption options.
    */
   addRecipient(key: types.KeyInput, options?: types.CritOption): Recipient {
@@ -165,7 +151,7 @@ export class GeneralEncrypt {
   }
 
   /**
-   * Sets the JWE Protected Header on the GeneralEncrypt object.
+   * Sets the JWE Protected Header. May only be called once.
    *
    * @param protectedHeader JWE Protected Header object.
    */
@@ -176,27 +162,31 @@ export class GeneralEncrypt {
   }
 
   /**
-   * Sets the JWE Shared Unprotected Header on the GeneralEncrypt object.
+   * Sets the JWE Shared Unprotected Header. May only be called once.
    *
    * @param sharedUnprotectedHeader JWE Shared Unprotected Header object.
    */
   setSharedUnprotectedHeader(sharedUnprotectedHeader: types.JWEHeaderParameters): this {
-    assertNotSet(this.#unprotectedHeader, 'setSharedUnprotectedHeader')
-    this.#unprotectedHeader = sharedUnprotectedHeader
+    assertNotSet(this.#sharedUnprotectedHeader, 'setSharedUnprotectedHeader')
+    this.#sharedUnprotectedHeader = sharedUnprotectedHeader
     return this
   }
 
   /**
-   * Sets the Additional Authenticated Data on the GeneralEncrypt object.
+   * Sets the JWE AAD, which is integrity protected but not encrypted.
    *
-   * @param aad Additional Authenticated Data.
+   * Its base64url encoding is combined with the Encoded Protected Header to form the Additional
+   * Authenticated Data encryption parameter. See
+   * {@link https://www.ietf.org/archive/id/draft-ietf-jose-hpke-encrypt-22.html#section-7.1 draft-ietf-jose-hpke-encrypt-22, Section 7.1, step 15}.
+   *
+   * @param aad JWE Additional Authenticated Data (JWE AAD).
    */
   setAdditionalAuthenticatedData(aad: Uint8Array): this {
     this.#aad = aad
     return this
   }
 
-  /** Encrypts and resolves the value of the General JWE object. */
+  /** Encrypts the plaintext and returns the general JWE JSON Serialization. */
   async encrypt(): Promise<types.GeneralJWE> {
     if (!this.#recipients.length) {
       throw new JWEInvalid('at least one recipient must be added')
@@ -204,46 +194,13 @@ export class GeneralEncrypt {
 
     assertUint8Array(this.#plaintext, 'plaintext')
 
-    if (this.#recipients.length === 1) {
-      const [unprotectedHeader, keyManagementParameters, key, crit] = this.#recipients[0].state
-
-      const flattened = await createJWE(
-        [
-          this.#plaintext,
-          this.#protectedHeader,
-          unprotectedHeader,
-          this.#unprotectedHeader,
-          this.#aad,
-          undefined,
-          undefined,
-          keyManagementParameters,
-          crit,
-          false,
-        ],
-        key,
-      )
-
-      const jwe: types.GeneralJWE = {
-        ciphertext: flattened.ciphertext,
-        iv: flattened.iv,
-        recipients: [{}],
-        tag: flattened.tag,
-      }
-
-      if (flattened.encrypted_key) jwe.recipients[0].encrypted_key = flattened.encrypted_key
-      copyOptionalMembers(flattened, jwe, jwe.recipients[0])
-
-      return jwe
-    }
-
-    let enc!: string
+    const multiple = this.#recipients.length > 1
+    let enc: string | undefined
     let protectedHeader = this.#protectedHeader
-    let sharedUnprotectedHeader = this.#unprotectedHeader
-    const inputs: EncryptInput[] = []
-    const checked: CheckedHeaders[] = []
-    for (let i = 0; i < this.#recipients.length; i++) {
-      const recipient = this.#recipients[i]
-      const [unprotectedHeader, keyManagementParameters, , crit] = recipient.state
+    let sharedUnprotectedHeader = this.#sharedUnprotectedHeader
+    const recipients: [input: EncryptInput, headers: CheckedHeaders, key: types.KeyInput][] = []
+    for (const recipient of this.#recipients) {
+      const [unprotectedHeader, keyManagementParameters, key, crit] = recipient.state
 
       const input: EncryptInput = [
         this.#plaintext,
@@ -255,79 +212,77 @@ export class GeneralEncrypt {
         undefined,
         keyManagementParameters,
         crit,
-        true,
+        multiple,
       ]
-      const headers = checkEncryptHeaders(input)
-      inputs.push(input)
-      checked.push(headers)
-
-      if (i === 0) {
+      const headers = checkEncryptHeaders(input, undefined, recipients.length > 0)
+      if (!recipients.length) {
         protectedHeader = input[1]!
         sharedUnprotectedHeader = input[3]!
       }
+      recipients.push([input, headers, key])
 
-      if (headers[1] === 'dir' || headers[1] === 'ECDH-ES') {
-        throw new JWEInvalid(`"${headers[1]}" alg may only have a single recipient`)
+      const [{ alg, enc: recipientEnc }, , algEntry] = headers
+      // draft-ietf-jose-hpke-encrypt-22, Section 7.2, step 7: single-recipient modes.
+      if (multiple && algEntry && !isJWECEKTransport(algEntry)) {
+        throw new JWEInvalid(`"${alg}" alg may only have a single recipient`)
       }
 
       if (!enc) {
-        enc = headers[2]
-      } else if (enc !== headers[2]) {
+        enc = recipientEnc
+      } else if (enc !== recipientEnc) {
         throw new JWEInvalid(
           'JWE "enc" (Encryption Algorithm) Header Parameter must be the same for all recipients',
         )
       }
     }
 
-    const cek = generateCek(checked[0][3])
+    for (const [, headers] of recipients) {
+      headers[2] ??= jweAlgorithm(headers[0].alg)
+    }
+    const [firstInput, firstHeaders, firstKey] = recipients[0]
+    // draft-ietf-jose-hpke-encrypt-22, Section 7.1, steps 2 and 9: reuse one CEK.
+    const cek = multiple ? generateCek(firstHeaders[1]!) : undefined
+    firstInput[5] = cek
+    const { encrypted_key, header, ...shared } = await encryptJWE(
+      firstInput,
+      firstHeaders,
+      firstKey,
+    )
 
     const jwe: types.GeneralJWE = {
-      ciphertext: '',
-      recipients: [],
+      ...shared,
+      recipients: [{}],
     }
+    if (encrypted_key) jwe.recipients[0].encrypted_key = encrypted_key
+    if (header) jwe.recipients[0].header = header
 
-    for (let i = 0; i < this.#recipients.length; i++) {
-      const recipient = this.#recipients[i]
-      const [, keyManagementParameters, key] = recipient.state
-      const target: Record<string, string | types.JWEHeaderParameters> = {}
-      jwe.recipients.push(target)
+    // RFC 7516, Section 7.2.1: all recipients share the ciphertext, IV, and Authentication Tag.
+    for (let i = 1; i < recipients.length; i++) {
+      const [input, [joseHeader, encEntry, algEntry], key] = recipients[i]
+      const unprotectedHeader = input[2]
 
-      if (i === 0) {
-        inputs[0][5] = cek
-        const flattened = await encryptJWE(inputs[0], checked[0], key)
-
-        jwe.ciphertext = flattened.ciphertext
-        jwe.iv = flattened.iv
-        jwe.tag = flattened.tag
-
-        target.encrypted_key = flattened.encrypted_key!
-        copyOptionalMembers(flattened, jwe, target)
-
-        continue
-      }
-
-      const [, alg, , encEntry] = checked[i]
-      const unprotectedHeader = inputs[i][2]
-
-      const k = await prepareKey(jweAlgorithm(alg), key, 'encrypt')
       const [, encryptedKey, parameters] = await encryptKeyManagement(
-        alg,
-        encEntry,
-        k,
+        algEntry as JWECEKTransportAlgorithm,
+        encEntry!,
+        key,
+        joseHeader,
         cek,
-        keyManagementParameters,
+        input[7],
       )
-      target.encrypted_key = b64u(encryptedKey!)
+      const target: types.GeneralJWE['recipients'][number] = {
+        encrypted_key: b64u(encryptedKey!),
+      }
       if (unprotectedHeader || parameters) {
         const header: types.JWEHeaderParameters = { ...unprotectedHeader, ...parameters }
         // The generated Key Management Parameters join the JWE Per-Recipient Unprotected Header
         // only after the headers were checked, so a name they collide with in another header would
         // otherwise reach the result.
-        if (parameters) checkDisjoint(inputs[i][1], header, inputs[i][3])
+        if (parameters) checkDisjoint(input[1], header, input[3])
         target.header = header
       }
+      jwe.recipients.push(target)
     }
 
-    return jwe as types.GeneralJWE
+    return jwe
   }
 }

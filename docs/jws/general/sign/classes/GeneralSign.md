@@ -4,7 +4,7 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-The GeneralSign class is used to build and sign General JWS objects.
+Produces general JWS JSON Serialization using digital signatures or MACs.
 
 This class is exported (as a named export) from the main `'jose'` module entry point as well as
 from its subpath export `'jose/jws/general/sign'`.
@@ -30,13 +30,13 @@ console.log(jws)
 
 ▸ **new GeneralSign**(`payload`): `GeneralSign`
 
-GeneralSign constructor
+Creates a signer for general JWS JSON Serialization.
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `payload` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | Binary representation of the payload to sign. |
+| `payload` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | JWS Payload bytes to sign or MAC. |
 
 #### Returns
 
@@ -48,13 +48,13 @@ GeneralSign constructor
 
 ▸ **addSignature**(`key`, `options?`): [`Signature`](../interfaces/Signature.md)
 
-Adds an additional signature for the General JWS object.
+Adds a signature and returns its configuration.
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `key` | [`KeyInput`](../../../../types/type-aliases/KeyInput.md) | Private Key or Secret to sign the individual JWS signature with. See [Algorithm Key Requirements](https://github.com/panva/jose/issues/210#jws-alg). |
+| `key` | [`KeyInput`](../../../../types/type-aliases/KeyInput.md) | Private key or shared secret. See [Algorithm Key Requirements](https://github.com/panva/jose/issues/210#jws-alg). |
 | `options?` | [`SignOptions`](../../../../types/interfaces/SignOptions.md) | JWS Sign options. |
 
 #### Returns
@@ -67,7 +67,8 @@ Adds an additional signature for the General JWS object.
 
 ▸ **sign**(): [`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<[`GeneralJWS`](../../../../types/interfaces/GeneralJWS.md)\>
 
-Signs and resolves the value of the General JWS object.
+Computes each JWS Signature (digital signature or MAC) and returns the general JWS JSON
+Serialization.
 
 #### Returns
 

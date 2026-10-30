@@ -5,13 +5,12 @@
  */
 
 import { unsupportedAlg, algArgument } from '../lib/key_algorithm.js'
+import { validateExtractableOption } from '../lib/key.js'
 
 import type * as types from '../types.d.ts'
-import { validateExtractableOption } from '../lib/key_options.js'
 
 /**
- * JWA Algorithm Identifiers that {@link generateSecret} is able to generate a secret for, subject to
- * runtime support.
+ * Algorithms supported by {@link generateSecret}, subject to runtime support.
  *
  * @ignore
  */
@@ -34,11 +33,10 @@ export type GenerateSecretAlgorithm =
   | (string & {})
 
 /**
- * Resolves what {@link generateSecret} returns for a given JWA Algorithm Identifier. The
- * AES_CBC_HMAC_SHA2 content encryption algorithms have no {@link !CryptoKey} representation, so they
- * yield a {@link !Uint8Array}; every other supported identifier yields a
- * {@link types.CryptoKey CryptoKey}. When the identifier is not statically known this resolves to
- * their union.
+ * Maps a JWA algorithm identifier to the value returned by {@link generateSecret}. AES_CBC_HMAC_SHA2
+ * algorithms return {@link !Uint8Array}; other supported algorithms return
+ * {@link types.CryptoKey CryptoKey}. When the algorithm is not statically known, the result is their
+ * union.
  */
 export type GeneratedSecret<Alg extends string> = Alg extends
   'A128CBC-HS256' | 'A192CBC-HS384' | 'A256CBC-HS512'
@@ -47,14 +45,11 @@ export type GeneratedSecret<Alg extends string> = Alg extends
     ? types.CryptoKey | Uint8Array
     : types.CryptoKey
 
-/** Secret generation function options. */
+/** Secret generation options. */
 export interface GenerateSecretOptions {
   /**
-   * The value to use as {@link !SubtleCrypto.generateKey} `extractable` argument. Default is false.
-   *
-   * > [!NOTE]\
-   * > Because A128CBC-HS256, A192CBC-HS384, and A256CBC-HS512 secrets cannot be represented as
-   * > {@link !CryptoKey} this option has no effect for them.
+   * Whether the generated CryptoKey is extractable. Defaults to false; has no effect for
+   * A128CBC-HS256, A192CBC-HS384, and A256CBC-HS512, which return raw bytes.
    */
   extractable?: boolean
 }
@@ -66,8 +61,8 @@ export interface GenerateSecretOptions {
  * > The secret key is generated with `extractable` set to `false` by default.
  *
  * > [!NOTE]\
- * > Because A128CBC-HS256, A192CBC-HS384, and A256CBC-HS512 secrets cannot be represented as
- * > {@link !CryptoKey} this method yields a {@link !Uint8Array} for them instead.
+ * > A128CBC-HS256, A192CBC-HS384, and A256CBC-HS512 return {@link !Uint8Array} because these secrets
+ * > have no CryptoKey representation.
  *
  * This function is exported (as a named export) from the main `'jose'` module entry point as well
  * as from its subpath export `'jose/key/generate/secret'`.
@@ -92,36 +87,40 @@ export async function generateSecret(
   options?: GenerateSecretOptions,
 ): Promise<types.CryptoKey | Uint8Array> {
   const extractable = validateExtractableOption(options?.extractable)
-  let length: number
+  let keyLengthBits: number
   let algorithm: AesKeyGenParams | HmacKeyGenParams
   let keyUsages: KeyUsage[]
   switch (alg) {
+    // RFC 7518, Section 3.2: generate a key as long as the hash output.
     case 'HS256':
     case 'HS384':
     case 'HS512':
-      length = +alg.slice(-3)
-      algorithm = { name: 'HMAC', hash: `SHA-${length}`, length }
+      keyLengthBits = +alg.slice(-3)
+      algorithm = { name: 'HMAC', hash: `SHA-${keyLengthBits}`, length: keyLengthBits }
       keyUsages = ['sign', 'verify']
       break
+    // RFC 7518, Sections 5.2.3-5.2.5: combined MAC_KEY and ENC_KEY lengths.
     case 'A128CBC-HS256':
     case 'A192CBC-HS384':
     case 'A256CBC-HS512':
       return crypto.getRandomValues(new Uint8Array(+alg.slice(-3) >> 3))
+    // RFC 7518, Section 4.4: AES Key Wrap key sizes.
     case 'A128KW':
     case 'A192KW':
     case 'A256KW':
-      length = +alg.slice(1, 4)
-      algorithm = { name: 'AES-KW', length }
+      keyLengthBits = +alg.slice(1, 4)
+      algorithm = { name: 'AES-KW', length: keyLengthBits }
       keyUsages = ['wrapKey', 'unwrapKey']
       break
+    // RFC 7518, Sections 4.7 and 5.3: AES-GCM key sizes.
     case 'A128GCMKW':
     case 'A192GCMKW':
     case 'A256GCMKW':
     case 'A128GCM':
     case 'A192GCM':
     case 'A256GCM':
-      length = +alg.slice(1, 4)
-      algorithm = { name: 'AES-GCM', length }
+      keyLengthBits = +alg.slice(1, 4)
+      algorithm = { name: 'AES-GCM', length: keyLengthBits }
       keyUsages = ['encrypt', 'decrypt']
       break
     default:

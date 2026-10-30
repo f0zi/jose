@@ -10,12 +10,12 @@ import type { VerifyGetKey } from '../lib/jws_verify.js'
 import { validateClaimsSet } from '../lib/jwt_claims_set.js'
 import { JWTInvalid } from '../util/errors.js'
 
-/** Combination of JWS Verification options and JWT Claims Set verification options. */
+/** JWS verification and JWT Claims Set validation options. */
 export interface JWTVerifyOptions extends types.VerifyOptions, types.JWTClaimVerificationOptions {}
 
 /**
- * Interface for JWT Verification dynamic key resolution. No token components have been verified at
- * the time of this function call.
+ * Resolves a JWT verification key. No token components have been authenticated when this function
+ * is called.
  *
  * @typeParam KeyType Type definition of the keys the function resolves. Narrowing it is what lets
  *   {@link types.ResolvedKey.key ResolvedKey.key} be inferred at the call site.
@@ -30,9 +30,57 @@ export interface JWTVerifyGetKey<
   KeyType | types.KeyObject | types.JWK
 > {}
 
+// Separate contextual payload inference from the object check. Required type parameters leave
+// calls with explicit type arguments to the existing overloads below.
+/** @ignore */
+export async function jwtVerify<PayloadType, KeyType extends types.KeyInput, InferredPayloadType>(
+  jwt: string | Uint8Array,
+  key: KeyType,
+  options?: JWTVerifyOptions,
+): Promise<
+  types.InferredJWTResult<
+    types.JWTVerifyResult<unknown>,
+    InferredPayloadType &
+      ([PayloadType] extends [object] ? unknown : unknown extends PayloadType ? unknown : never)
+  >
+>
+/** @ignore */
+export async function jwtVerify<
+  PayloadType,
+  KeyType extends types.CryptoKey | Uint8Array,
+  InferredPayloadType,
+>(
+  jwt: string | Uint8Array,
+  getKey: JWTVerifyGetKey<KeyType>,
+  options?: JWTVerifyOptions,
+): Promise<
+  types.InferredJWTResult<
+    types.JWTVerifyResult<unknown>,
+    InferredPayloadType &
+      ([PayloadType] extends [object] ? unknown : unknown extends PayloadType ? unknown : never)
+  > &
+    types.ResolvedKey<KeyType>
+>
+/** @ignore */
+export async function jwtVerify<
+  PayloadType,
+  KeyType extends types.KeyInput | JWTVerifyGetKey,
+  InferredPayloadType,
+>(
+  jwt: string | Uint8Array,
+  key: KeyType,
+  options?: JWTVerifyOptions,
+): Promise<
+  types.InferredJWTResult<
+    types.JWTVerifyResult<unknown>,
+    InferredPayloadType &
+      ([PayloadType] extends [object] ? unknown : unknown extends PayloadType ? unknown : never)
+  > &
+    Partial<types.ResolvedKey>
+>
+
 /**
- * Verifies the JWT format (to be a JWS Compact format), verifies the JWS signature, validates the
- * JWT Claims Set.
+ * Validates a JWT in JWS Compact Serialization (digital signature or MAC) and its JWT Claims Set.
  *
  * This function is exported (as a named export) from the main `'jose'` module entry point as well
  * as from its subpath export `'jose/jwt/verify'`.
@@ -110,9 +158,9 @@ export interface JWTVerifyGetKey<
  * ```
  *
  * @param jwt JSON Web Token value (encoded as JWS).
- * @param key Key to verify the JWT with. See
+ * @param key Public key or shared secret to verify the JWT with. See
  *   {@link https://github.com/panva/jose/issues/210#jws-alg Algorithm Key Requirements}.
- * @param options JWT Decryption and JWT Claims Set validation options.
+ * @param options JWT Verification and JWT Claims Set validation options.
  */
 export async function jwtVerify<PayloadType = types.JWTPayload>(
   jwt: string | Uint8Array,
@@ -121,6 +169,9 @@ export async function jwtVerify<PayloadType = types.JWTPayload>(
 ): Promise<types.JWTVerifyResult<PayloadType>>
 
 /**
+ * Validates the JWT's JWS Signature (digital signature or MAC) and JWT Claims Set, returning the
+ * resolved key.
+ *
  * @example
  *
  * Usage with a public JSON Web Key Set hosted on a remote URL
@@ -137,9 +188,9 @@ export async function jwtVerify<PayloadType = types.JWTPayload>(
  * ```
  *
  * @param jwt JSON Web Token value (encoded as JWS).
- * @param getKey Function resolving a key to verify the JWT with. See
+ * @param getKey Function resolving a public key or shared secret to verify the JWT with. See
  *   {@link https://github.com/panva/jose/issues/210#jws-alg Algorithm Key Requirements}.
- * @param options JWT Decryption and JWT Claims Set validation options.
+ * @param options JWT Verification and JWT Claims Set validation options.
  */
 export async function jwtVerify<
   PayloadType = types.JWTPayload,
@@ -151,14 +202,13 @@ export async function jwtVerify<
 ): Promise<types.JWTVerifyResult<PayloadType> & types.ResolvedKey<KeyType>>
 
 /**
- * Accepts either form of the `key` argument. Use this overload when forwarding a value that may be
- * either a key or a key resolution function; `key` is present on the result only when a resolution
- * function was used.
+ * Accepts a key or key resolver. Use this overload when forwarding either form; the result includes
+ * `key` only when a resolver was used.
  *
  * @param jwt JSON Web Token value (encoded as JWS).
  * @param key Key, or function resolving a key, to verify the JWT with. See
  *   {@link https://github.com/panva/jose/issues/210#jws-alg Algorithm Key Requirements}.
- * @param options JWT Decryption and JWT Claims Set validation options.
+ * @param options JWT Verification and JWT Claims Set validation options.
  */
 export async function jwtVerify<PayloadType = types.JWTPayload>(
   jwt: string | Uint8Array,
@@ -171,18 +221,16 @@ export async function jwtVerify(
   key: types.KeyInput | JWTVerifyGetKey,
   options?: JWTVerifyOptions,
 ) {
-  const verified = await verifyCompact(
+  const [verified, b64] = await verifyCompact(
     jwt,
     prepareVerify(options),
     key as types.KeyInput | VerifyGetKey,
   )
-  if (!verified[2]) {
+  // RFC 7797, Section 7: JWTs must not use the unencoded payload option.
+  if (!b64) {
     throw new JWTInvalid('JWTs MUST NOT use unencoded payload')
   }
-  const payload = validateClaimsSet(verified[1], verified[0], options)
-  const result = { payload, protectedHeader: verified[1] as types.JWTHeaderParameters }
-  if (typeof key === 'function') {
-    return { ...result, key: verified[3] }
-  }
-  return result
+  // RFC 7519, Section 7.2, step 10: parse and validate the JWT Claims Set.
+  const payload = validateClaimsSet(verified.protectedHeader!, verified.payload, options)
+  return { ...verified, payload }
 }

@@ -4,7 +4,7 @@
 
 Support from the community to continue maintaining and improving this module is welcome. If you find the module useful, please consider supporting the project by [becoming a sponsor](https://github.com/sponsors/panva).
 
-The FlattenedEncrypt class is used to build and encrypt Flattened JWE objects.
+Produces flattened JWE JSON Serialization using authenticated encryption.
 
 This class is exported (as a named export) from the main `'jose'` module entry point as well as
 from its subpath export `'jose/jwe/flattened/encrypt'`.
@@ -28,7 +28,7 @@ console.log(jwe)
 
 ▸ **new FlattenedEncrypt**(`plaintext`): `FlattenedEncrypt`
 
-FlattenedEncrypt constructor
+Creates an encryptor for flattened JWE JSON Serialization.
 
 #### Parameters
 
@@ -46,13 +46,13 @@ FlattenedEncrypt constructor
 
 ▸ **encrypt**(`key`, `options?`): [`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<[`FlattenedJWE`](../../../../types/interfaces/FlattenedJWE.md)\>
 
-Encrypts and resolves the value of the Flattened JWE object.
+Encrypts the plaintext and returns the flattened JWE JSON Serialization.
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `key` | [`KeyInput`](../../../../types/type-aliases/KeyInput.md) | Public Key or Secret to encrypt the JWE with. See [Algorithm Key Requirements](https://github.com/panva/jose/issues/210#jwe-alg). |
+| `key` | [`KeyInput`](../../../../types/type-aliases/KeyInput.md) | Public key or shared secret. See [Algorithm Key Requirements](https://github.com/panva/jose/issues/210#jwe-alg). |
 | `options?` | [`EncryptOptions`](../../../../types/interfaces/EncryptOptions.md) | JWE Encryption options. |
 
 #### Returns
@@ -65,13 +65,17 @@ Encrypts and resolves the value of the Flattened JWE object.
 
 ▸ **setAdditionalAuthenticatedData**(`aad`): `this`
 
-Sets the Additional Authenticated Data on the FlattenedEncrypt object.
+Sets the JWE AAD, which is integrity protected but not encrypted.
+
+Its base64url encoding is combined with the Encoded Protected Header to form the Additional
+Authenticated Data encryption parameter. See
+[draft-ietf-jose-hpke-encrypt-22, Section 7.1, step 15](https://www.ietf.org/archive/id/draft-ietf-jose-hpke-encrypt-22.html#section-7.1).
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `aad` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | Additional Authenticated Data. |
+| `aad` | [`Uint8Array`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) | JWE Additional Authenticated Data (JWE AAD). |
 
 #### Returns
 
@@ -83,8 +87,8 @@ Sets the Additional Authenticated Data on the FlattenedEncrypt object.
 
 ▸ **setContentEncryptionKey**(`cek`): `this`
 
-Sets a content encryption key to use, by default a random suitable one is generated for the JWE
-"enc" (Encryption Algorithm) Header Parameter.
+Sets a content encryption key instead of generating a random one for the JWE "enc" algorithm.
+May only be called once.
 
 #### Parameters
 
@@ -98,8 +102,7 @@ Sets a content encryption key to use, by default a random suitable one is genera
 
 #### Deprecated
 
-You should not use this method. It is only really intended for test and vector
-  validation purposes.
+Use only for testing and vector validation.
 
 ***
 
@@ -107,8 +110,8 @@ You should not use this method. It is only really intended for test and vector
 
 ▸ **setInitializationVector**(`iv`): `this`
 
-Sets the JWE Initialization Vector to use for content encryption, by default a random suitable
-one is generated for the JWE "enc" (Encryption Algorithm) Header Parameter.
+Sets the content encryption IV instead of generating a random one for the JWE "enc" algorithm.
+May only be called once.
 
 #### Parameters
 
@@ -122,8 +125,7 @@ one is generated for the JWE "enc" (Encryption Algorithm) Header Parameter.
 
 #### Deprecated
 
-You should not use this method. It is only really intended for test and vector
-  validation purposes.
+Use only for testing and vector validation.
 
 ***
 
@@ -131,10 +133,9 @@ You should not use this method. It is only really intended for test and vector
 
 ▸ **setKeyManagementParameters**(`parameters`): `this`
 
-Sets the JWE Key Management parameters to be used when encrypting. Use this method instead of
-the header setters to configure algorithm inputs such as ECDH-ES "apu" (Agreement PartyUInfo)
-and "apv" (Agreement PartyVInfo), or PBES2 "p2c" (PBES2 Count). The parameters are added to the
-appropriate JOSE Header.
+Sets key management inputs such as ECDH-ES "apu"/"apv" or PBES2 "p2c". Use this method instead
+of header setters; the resulting parameters are added to the JOSE Header. May only be called
+once.
 
 #### Parameters
 
@@ -152,7 +153,7 @@ appropriate JOSE Header.
 
 ▸ **setProtectedHeader**(`protectedHeader`): `this`
 
-Sets the JWE Protected Header on the FlattenedEncrypt object.
+Sets the JWE Protected Header. May only be called once.
 
 #### Parameters
 
@@ -170,7 +171,7 @@ Sets the JWE Protected Header on the FlattenedEncrypt object.
 
 ▸ **setSharedUnprotectedHeader**(`sharedUnprotectedHeader`): `this`
 
-Sets the JWE Shared Unprotected Header on the FlattenedEncrypt object.
+Sets the JWE Shared Unprotected Header. May only be called once.
 
 #### Parameters
 
@@ -188,7 +189,7 @@ Sets the JWE Shared Unprotected Header on the FlattenedEncrypt object.
 
 ▸ **setUnprotectedHeader**(`unprotectedHeader`): `this`
 
-Sets the JWE Per-Recipient Unprotected Header on the FlattenedEncrypt object.
+Sets the JWE Per-Recipient Unprotected Header. May only be called once.
 
 #### Parameters
 

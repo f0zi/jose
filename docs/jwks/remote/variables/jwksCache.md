@@ -6,10 +6,11 @@ Support from the community to continue maintaining and improving this module is 
 
 • `const` **jwksCache**: unique `symbol`
 
+Symbol used to configure an externally persisted remote JWKS cache.
+
 > [!WARNING]\
-> This option has security implications that must be understood, assessed for applicability, and
-> accepted before use. It is critical that the JSON Web Key Set cache only be writable by your own
-> code.
+> Only trusted application code must be allowed to write this cache; its keys are trusted for
+> signature verification.
 
 This option is intended for cloud computing runtimes that cannot keep an in memory cache between
 their code's invocations. The supplied writable object seeds the resolver's cache and is updated

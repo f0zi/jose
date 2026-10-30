@@ -10,13 +10,13 @@ import type { DecryptGetKey } from '../lib/jwe_decrypt.js'
 import { validateClaimsSet } from '../lib/jwt_claims_set.js'
 import { JWTClaimValidationFailed } from '../util/errors.js'
 
-/** Combination of JWE Decryption options and JWT Claims Set verification options. */
+/** JWE decryption and JWT Claims Set validation options. */
 export interface JWTDecryptOptions
   extends types.DecryptOptions, types.JWTClaimVerificationOptions {}
 
 /**
- * Interface for JWT Decryption dynamic key resolution. No token components have been verified at
- * the time of this function call.
+ * Resolves a JWT decryption key. No token components have been authenticated when this function is
+ * called.
  *
  * @typeParam KeyType Type definition of the keys the function resolves. Narrowing it is what lets
  *   {@link types.ResolvedKey.key ResolvedKey.key} be inferred at the call site.
@@ -29,9 +29,57 @@ export interface JWTDecryptGetKey<
   KeyType | types.KeyObject | types.JWK
 > {}
 
+// Separate contextual payload inference from the object check. Required type parameters leave
+// calls with explicit type arguments to the existing overloads below.
+/** @ignore */
+export function jwtDecrypt<PayloadType, KeyType extends types.KeyInput, InferredPayloadType>(
+  jwt: string | Uint8Array,
+  key: KeyType,
+  options?: JWTDecryptOptions,
+): Promise<
+  types.InferredJWTResult<
+    types.JWTDecryptResult<unknown>,
+    InferredPayloadType &
+      ([PayloadType] extends [object] ? unknown : unknown extends PayloadType ? unknown : never)
+  >
+>
+/** @ignore */
+export function jwtDecrypt<
+  PayloadType,
+  KeyType extends types.CryptoKey | Uint8Array,
+  InferredPayloadType,
+>(
+  jwt: string | Uint8Array,
+  getKey: JWTDecryptGetKey<KeyType>,
+  options?: JWTDecryptOptions,
+): Promise<
+  types.InferredJWTResult<
+    types.JWTDecryptResult<unknown>,
+    InferredPayloadType &
+      ([PayloadType] extends [object] ? unknown : unknown extends PayloadType ? unknown : never)
+  > &
+    types.ResolvedKey<KeyType>
+>
+/** @ignore */
+export function jwtDecrypt<
+  PayloadType,
+  KeyType extends types.KeyInput | JWTDecryptGetKey,
+  InferredPayloadType,
+>(
+  jwt: string | Uint8Array,
+  key: KeyType,
+  options?: JWTDecryptOptions,
+): Promise<
+  types.InferredJWTResult<
+    types.JWTDecryptResult<unknown>,
+    InferredPayloadType &
+      ([PayloadType] extends [object] ? unknown : unknown extends PayloadType ? unknown : never)
+  > &
+    Partial<types.ResolvedKey>
+>
+
 /**
- * Verifies the JWT format (to be a JWE Compact format), decrypts the ciphertext, validates the JWT
- * Claims Set.
+ * Authenticates and decrypts a JWT in JWE Compact Serialization and validates its JWT Claims Set.
  *
  * This function is exported (as a named export) from the main `'jose'` module entry point as well
  * as from its subpath export `'jose/jwt/decrypt'`.
@@ -53,7 +101,7 @@ export interface JWTDecryptGetKey<
  * ```
  *
  * @param jwt JSON Web Token value (encoded as JWE).
- * @param key Private Key or Secret to decrypt and verify the JWT with. See
+ * @param key Private key or shared secret to authenticate and decrypt the JWT with. See
  *   {@link https://github.com/panva/jose/issues/210#jwe-alg Algorithm Key Requirements}.
  * @param options JWT Decryption and JWT Claims Set validation options.
  */
@@ -63,11 +111,12 @@ export function jwtDecrypt<PayloadType = types.JWTPayload>(
   options?: JWTDecryptOptions,
 ): Promise<types.JWTDecryptResult<PayloadType>>
 /**
- * Decrypts a JWT and validates its JWT Claims Set, resolving the key dynamically. The result
- * additionally carries the {@link types.ResolvedKey.key resolved key}.
+ * Decrypts a JWT and validates its claims, returning the dynamically
+ * {@link types.ResolvedKey.key resolved key}.
  *
  * @param jwt JSON Web Token value (encoded as JWE).
- * @param getKey Function resolving Private Key or Secret to decrypt and verify the JWT with. See
+ * @param getKey Function resolving a private key or shared secret to authenticate and decrypt the
+ *   JWT with. See
  *   {@link https://github.com/panva/jose/issues/210#jwe-alg Algorithm Key Requirements}.
  * @param options JWT Decryption and JWT Claims Set validation options.
  */
@@ -80,13 +129,13 @@ export function jwtDecrypt<
   options?: JWTDecryptOptions,
 ): Promise<types.JWTDecryptResult<PayloadType> & types.ResolvedKey<KeyType>>
 /**
- * Accepts either form of the `key` argument. Use this overload when forwarding a value that may be
- * either a key or a key resolution function; `key` is present on the result only when a resolution
- * function was used.
+ * Accepts a key or key resolver. Use this overload when forwarding either form; the result includes
+ * `key` only when a resolver was used.
  *
  * @param jwt JSON Web Token value (encoded as JWE).
- * @param key Private Key or Secret, or a function resolving one, to decrypt and verify the JWT
- *   with. See {@link https://github.com/panva/jose/issues/210#jwe-alg Algorithm Key Requirements}.
+ * @param key Private key or shared secret, or a function resolving one, to authenticate and decrypt
+ *   the JWT with. See
+ *   {@link https://github.com/panva/jose/issues/210#jwe-alg Algorithm Key Requirements}.
  * @param options JWT Decryption and JWT Claims Set validation options.
  */
 export function jwtDecrypt<PayloadType = types.JWTPayload>(
@@ -99,14 +148,17 @@ export async function jwtDecrypt(
   key: types.KeyInput | JWTDecryptGetKey,
   options?: JWTDecryptOptions,
 ) {
-  const decrypted = await decryptCompact(
+  const { plaintext, ...result } = await decryptCompact(
     jwt,
     prepareDecrypt(options),
     key as types.KeyInput | DecryptGetKey,
   )
-  const protectedHeader = decrypted[1] as types.JWTHeaderParameters
-  const payload = validateClaimsSet(protectedHeader, decrypted[0], options)
+  const { protectedHeader } = result
+  // RFC 7519, Section 7.2, step 10: parse and validate the JWT Claims Set.
+  const payload = validateClaimsSet(protectedHeader, plaintext, options)
 
+  // RFC 7519, Section 5.3: compare replicated claims with the encrypted Claims Set.
+  // The audience-array comparison below requires the same element order.
   for (const claim of ['iss', 'sub', 'aud'] as const) {
     if (
       protectedHeader[claim] !== undefined &&
@@ -123,11 +175,5 @@ export async function jwtDecrypt(
     }
   }
 
-  const result = { payload, protectedHeader }
-
-  if (typeof key === 'function') {
-    return { ...result, key: decrypted[2] }
-  }
-
-  return result
+  return { payload, ...result }
 }
