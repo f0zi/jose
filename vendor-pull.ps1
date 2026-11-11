@@ -1,3 +1,43 @@
+<#
+.SYNOPSIS
+Pull vendor changes and merge them into one or more local branches.
+
+.DESCRIPTION
+With no operation switches, performs both the vendor pull and merge. Use -VendorPull
+or -Merge to run only one phase. Merge targets default to the branch that was active
+when the script started.
+
+.PARAMETER VendorBranch
+Local branch that tracks the vendor source.
+
+.PARAMETER TargetBranch
+Branch or branches to merge into. Defaults to the current branch.
+
+.PARAMETER VendorRemote
+Git remote containing the vendor source.
+
+.PARAMETER VendorRemoteBranch
+Remote branch to pull into the local vendor branch.
+
+.PARAMETER VendorPull
+Pull the vendor remote branch into the local vendor branch and push it to origin.
+
+.PARAMETER Merge
+Merge the local vendor branch into the target branch or branches.
+
+.PARAMETER Stash
+Stash tracked and untracked changes before running, then restore them after success.
+
+.PARAMETER Force
+Allow the workflow to proceed when the working tree is not clean.
+
+.PARAMETER WhatIf
+Preview repository-changing commands without executing them. This is a standard
+PowerShell common parameter enabled by SupportsShouldProcess.
+
+.EXAMPLE
+.\vendor-pull.ps1 -Stash -VendorPull -Merge -TargetBranch main
+#>
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
 param(
 	[string]$VendorBranch = 'vendor',
