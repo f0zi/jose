@@ -206,6 +206,9 @@ export function validateClaimsSet(
   }
 
   validateInput('clockTolerance option', tolerance)
+  if (tolerance < 0) {
+    throw new TypeError('Invalid clockTolerance option input')
+  }
 
   const { currentDate } = options
   const now = validateInput(
@@ -243,6 +246,9 @@ export function validateClaimsSet(
       'maxTokenAge option',
       typeof maxTokenAge === 'number' ? maxTokenAge : secs(maxTokenAge),
     )
+    if (max < 0) {
+      throw new TypeError('Invalid maxTokenAge option input')
+    }
 
     if (age - tolerance > max) {
       throw new JWTExpired(

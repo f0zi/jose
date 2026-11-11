@@ -31,7 +31,7 @@ let USER_AGENT: string
 // @ts-ignore
 if (typeof navigator === 'undefined' || !navigator.userAgent?.startsWith?.('Mozilla/5.0 ')) {
   const NAME = 'jose'
-  const VERSION = 'v6.2.14'
+  const VERSION = 'v6.2.17'
   USER_AGENT = `${NAME}/${VERSION}`
 }
 
@@ -352,6 +352,9 @@ function isFreshFor(timestamp: unknown, duration: number): timestamp is number {
 function validateDuration(value: number | undefined, fallback: number, option: string): number {
   if (Number.isNaN(value)) {
     throw new TypeError(`"${option}" option must not be NaN`)
+  }
+  if (typeof value === 'number' && value < 0) {
+    throw new TypeError(`"${option}" option must not be negative`)
   }
   return typeof value === 'number' ? value : fallback
 }
