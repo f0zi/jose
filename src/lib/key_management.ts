@@ -26,6 +26,27 @@ type SubtleCryptoWithGetPublicKey = SubtleCrypto & {
   getPublicKey?(key: types.CryptoKey, keyUsages: KeyUsage[]): Promise<types.CryptoKey>
 }
 
+async function exportPublicJwk(
+  subtle: SubtleCryptoWithGetPublicKey,
+  key: types.CryptoKey,
+  parameterName: 'epk' | 'spk',
+): Promise<types.JWK> {
+  let exportableKey = key
+  if (!exportableKey.extractable) {
+    if (typeof subtle.getPublicKey !== 'function') {
+      throw new TypeError(`CryptoKey for "${parameterName}" must be extractable`)
+    }
+    exportableKey = await subtle.getPublicKey(key, [])
+  }
+
+  return subtle.exportKey('jwk', exportableKey) as Promise<types.JWK>
+}
+
+async function hmac(key: Uint8Array, data: Uint8Array, hash = 'SHA-256'): Promise<Uint8Array> {
+  const cryptoKey = await crypto.subtle.importKey('raw', key as Uint8Array<ArrayBuffer>, { name: 'HMAC', hash }, false, ['sign'])
+  return new Uint8Array(await crypto.subtle.sign('HMAC', cryptoKey, data as Uint8Array<ArrayBuffer>))
+}
+
 /** ECDH accepts either of two algorithm names, so it cannot go through the generic comparison. */
 function checkEcdhCryptoKey(key: types.CryptoKey, usage?: KeyUsage): void {
   if (key.algorithm.name !== 'ECDH' && key.algorithm.name !== 'X25519') {
@@ -124,6 +145,28 @@ function lengthAndInput(input: Uint8Array) {
   return concat(uint32be(input.length), input)
 }
 
+function getEcdhSharedSecretLength(publicKey: types.CryptoKey): number {
+  return publicKey.algorithm.name === 'X25519'
+    ? 256
+    : Math.ceil(parseInt((publicKey.algorithm as EcKeyAlgorithm).namedCurve.slice(-3), 10) / 8) << 3
+}
+
+async function deriveEcdhSharedSecret(
+  publicKey: types.CryptoKey,
+  privateKey: types.CryptoKey,
+): Promise<Uint8Array> {
+  return new Uint8Array(
+    await crypto.subtle.deriveBits(
+      {
+        name: publicKey.algorithm.name,
+        public: publicKey,
+      },
+      privateKey,
+      getEcdhSharedSecretLength(publicKey),
+    ),
+  )
+}
+
 /**
  * Concat KDF implementation
  *
@@ -187,24 +230,67 @@ async function ecdhesDeriveKey(
   )
 
   // Perform ECDH to get the shared secret Z
-  const Z = new Uint8Array(
-    await crypto.subtle.deriveBits(
-      {
-        name: publicKey.algorithm.name,
-        public: publicKey,
-      },
-      privateKey,
-      publicKey.algorithm.name === 'X25519'
-        ? 256
-        : Math.ceil(
-            parseInt((publicKey.algorithm as EcKeyAlgorithm).namedCurve.slice(-3), 10) / 8,
-          ) << 3,
-    ),
-  )
+  const Z = await deriveEcdhSharedSecret(publicKey, privateKey)
 
   // Apply Concat KDF to derive the final key material
   return concatKdf(Z, keyDataLength, otherInfo)
 }
+
+/** ECDH-1PU Key Agreement with Concat KDF
+ * @param zePublicKey - Recipient's static public key when sending or the sender's ephemeral public key when receiving
+ * @param zePrivateKey - Sender's ephemeral private key when sending or the recipient's static private key when receiving
+ * @param zsPublicKey - Recipient's static public key when sending or the sender's static public key when receiving
+ * @param zsPrivateKey - Sender's static private key when sending or the recipient's static private key when receiving
+ */
+async function ecdh1puDeriveKey(
+  zePublicKey: types.CryptoKey,
+  zePrivateKey: types.CryptoKey,
+  zsPublicKey: types.CryptoKey,
+  zsPrivateKey: types.CryptoKey,
+  algorithm: string,
+  keyLength: number,
+  apu: Uint8Array = new Uint8Array(),
+  apv: Uint8Array = new Uint8Array(),
+): Promise<Uint8Array> {
+  checkEcdhCryptoKey(zePublicKey)
+  checkEcdhCryptoKey(zePrivateKey, 'deriveBits')
+  checkEcdhCryptoKey(zsPublicKey)
+  checkEcdhCryptoKey(zsPrivateKey, 'deriveBits')
+
+  const otherInfo = concat(
+    lengthAndInput(encode(algorithm)),
+    lengthAndInput(apu),
+    lengthAndInput(apv),
+    uint32be(keyLength),
+  )
+
+  // Perform ECDH to get the shared secret Ze
+  const Z_e = await deriveEcdhSharedSecret(zePublicKey, zePrivateKey)
+  const Z_s = await deriveEcdhSharedSecret(zsPublicKey, zsPrivateKey)
+
+  const Z_total = concat(Z_e, Z_s)
+
+  // Apply Concat KDF to derive the final key material
+  return concatKdf(Z_total, keyLength, otherInfo)
+}
+
+async function ecdhCekHmac(senderKey: types.CryptoKey, recipientKey: types.CryptoKey, cek: Uint8Array, apu: Uint8Array = new Uint8Array(), apv: Uint8Array = new Uint8Array(), bits: number = 256): Promise<Uint8Array> {
+  assertEcdhKey(senderKey)
+  assertEcdhKey(recipientKey)
+  const Z = await deriveEcdhSharedSecret(recipientKey, senderKey)
+  const otherInfo = concat(
+    lengthAndInput(encode('ECDH-ES+HS' + bits)),
+    lengthAndInput(apu),
+    lengthAndInput(apv),
+    uint32be(bits),
+  )
+  const hmacKey = await concatKdf(Z, bits, otherInfo)
+  return hmac(hmacKey, cek)
+}
+
+// function sanitizeSpk(spk, spid, senderKey) : { spk: types.JWK | undefined, spid: string } {
+//   return { spk, spid }
+// }
 
 function assertEcdhKey(key: types.CryptoKey | Uint8Array): asserts key is types.CryptoKey {
   assertCryptoKey(key)
@@ -264,6 +350,7 @@ export async function decryptKeyManagement(
   encryptedKey: Uint8Array | undefined,
   joseHeader: types.JWEHeaderParameters,
   maxPBES2Count?: number,
+  senderKey?: types.CryptoKey | Uint8Array
 ): Promise<types.CryptoKey | Uint8Array> {
   const { alg } = entry
   const mode = entry.mode
@@ -296,18 +383,44 @@ export async function decryptKeyManagement(
       const partyVInfo = partyInfo(joseHeader, 'apv')
       checkPartyInfo(partyUInfo, partyVInfo)
 
-      const derivedKey = await ecdhesDeriveKey(
-        ephemeralPublicKey,
-        key,
-        direct ? enc.alg : alg,
-        direct ? enc.cekBits : parseInt(alg.slice(-5, -2), 10),
-        partyUInfo,
-        partyVInfo,
-      )
+      if(alg.startsWith('ECDH-ES')) {
+        const derivedKey = await ecdhesDeriveKey(
+          ephemeralPublicKey,
+          key,
+          direct ? enc.alg : alg,
+          direct ? enc.cekBits : parseInt(alg.slice(-5, -2), 10),
+          partyUInfo,
+          partyVInfo,
+        )
 
-      if (direct) return derivedKey
+        if (direct) return derivedKey
+        key = derivedKey
+      } else if(alg.startsWith('ECDH-1PU')) {
+        if (!senderKey) {
+          throw new JWEInvalid(`Sender's public key is required for ECDH-1PU`)
+        }
 
-      key = derivedKey
+        const senderEphemeralPublicKey = ephemeralPublicKey
+        const senderStaticPublicKey = senderKey as types.CryptoKey //<TODO
+        const recipientStaticPrivateKey = key
+        const keyLength = alg === 'ECDH-1PU' ? enc.cekBits : parseInt(alg.slice(-5, -2), 10)
+
+        const derivedKey = await ecdh1puDeriveKey(
+          senderEphemeralPublicKey,
+          recipientStaticPrivateKey,
+          senderStaticPublicKey,
+          recipientStaticPrivateKey,
+          alg,
+          keyLength,
+          partyUInfo,
+          partyVInfo,
+        )
+
+        if (direct) return derivedKey
+        key = derivedKey
+      } else {
+        throw new JWEInvalid(`Unsupported ECDH algorithm: ${alg}`)
+      }
       break
     }
     case 'RSA-OAEP': {
@@ -410,33 +523,65 @@ export async function encryptKeyManagement(
           await crypto.subtle.generateKey(key.algorithm as EcKeyAlgorithm, true, ['deriveBits'])
         ).privateKey
       }
+
       const subtle = crypto.subtle as SubtleCryptoWithGetPublicKey
-      let exportableEpk = ephemeralPrivateKey
-      if (!exportableEpk.extractable) {
-        if (typeof subtle.getPublicKey !== 'function') {
-          throw new TypeError('CryptoKey for "epk" must be extractable')
-        }
-        exportableEpk = await subtle.getPublicKey(ephemeralPrivateKey, [])
-      }
-      const { x, y, crv, kty } = (await subtle.exportKey('jwk', exportableEpk)) as types.JWK
+      const ephemeralPublicJwk = await exportPublicJwk(subtle, ephemeralPrivateKey, 'epk')
       const direct = mode === 'direct-key-agreement'
-      const derivedKey = await ecdhesDeriveKey(
-        key,
-        ephemeralPrivateKey,
-        direct ? enc.alg : alg,
-        direct ? enc.cekBits : parseInt(alg.slice(-5, -2), 10),
-        apu,
-        apv,
-      )
+      const is1PU = alg.startsWith('ECDH-1PU')
+      const keyLength = direct ? enc.cekBits : parseInt(alg.slice(-5, -2), 10)
+
+      const recipientPublicKey = key
+      const senderPrivateKey = providedParameters.senderKey ? await prepareKey(
+        entry,
+        providedParameters.senderKey,
+        'decrypt',
+      ) as types.CryptoKey : undefined
+
+      if (is1PU) {
+        if(!senderPrivateKey) throw new JWEInvalid('Sender key missing for ECDH-1PU')
+        if(direct) throw new JWEInvalid('Direct key agreement cannot be used with ECDH-1PU')
+      } else if(senderPrivateKey) {
+        if(!cek) throw new JWEInvalid('HMAC computation requested but CEK is missing')
+        if(direct) throw new JWEInvalid('HMAC computation requested but direct key agreement is used')
+      }
+
+      if (alg.startsWith('ECDH-ES')) {
+        key = await ecdhesDeriveKey(
+          recipientPublicKey,
+          ephemeralPrivateKey,
+          direct ? enc.alg : alg,
+          keyLength,
+          apu,
+          apv,
+        )
+      } else if (alg.startsWith('ECDH-1PU')) {
+        key = await ecdh1puDeriveKey(
+          recipientPublicKey,
+          ephemeralPrivateKey,
+          recipientPublicKey,
+          senderPrivateKey!,
+          direct ? enc.alg : alg,
+          keyLength,
+          apu,
+          apv,
+        )
+      }
+
+      const { x, y, crv, kty } = ephemeralPublicJwk
       const epk: JWK = { x, crv, kty }
       if (kty === 'EC') epk.y = y
       parameters = { epk }
       if (providedApu !== undefined) parameters.apu = b64u(providedApu)
       if (providedApv !== undefined) parameters.apv = b64u(providedApv)
 
-      if (direct) return [derivedKey, undefined, parameters]
+      if((is1PU || senderPrivateKey) && providedParameters.skid) {
+        parameters['skid'] = providedParameters.skid
+      }
+      if(senderPrivateKey && cek) {
+        parameters['cek_hs256'] = b64u(await ecdhCekHmac(senderPrivateKey, recipientPublicKey, cek, apu, apv, 256))
+      }
 
-      key = derivedKey
+      if (direct) return [key, undefined, parameters]
       break
     }
     case 'RSA-OAEP': {

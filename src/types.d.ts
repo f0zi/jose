@@ -44,6 +44,10 @@ export type JWEKeyManagementAlgorithm =
   | 'ECDH-ES+A128KW'
   | 'ECDH-ES+A192KW'
   | 'ECDH-ES+A256KW'
+  | 'ECDH-1PU'
+  | 'ECDH-1PU+A128KW'
+  | 'ECDH-1PU+A192KW'
+  | 'ECDH-1PU+A256KW'
   | 'RSA-OAEP'
   | 'RSA-OAEP-256'
   | 'RSA-OAEP-384'
@@ -507,6 +511,16 @@ export interface JWEKeyManagementHeaderParameters {
    * @deprecated For testing and vector validation only.
    */
   epk?: CryptoKey | KeyObject
+
+  /**
+   * ECDH-1PU sender static private key for encryption, or sender static public key for decryption. Required for ECDH-1PU and the cek hmac. This is used to derive part of the shared secret (Zs).
+   */
+  senderKey?: CryptoKey | KeyObject
+
+  /**
+   * ECDH-1PU sender key identifier. Required for ECDH-1PU unless "spk" with a "kid" is provided. This is a hint to the recipient about which sender key was used.
+   */
+  skid?: string
 }
 
 /**
@@ -583,6 +597,12 @@ export interface JWEHeaderParameters extends JoseHeaderParameters {
    */
   zip?: 'DEF' | (string & {})
 
+  /**
+   * ECDH-1PU sender key identifier. Required for ECDH-1PU unless "spk" with a "kid" is provided. This is a hint to the recipient about which sender key was used.
+   * Also required for the CEK HMAC computation when using ECDH-ES with the "cek_hs256" extension.
+   */
+  skid?: string
+
   /** Any other JWE Header member. */
   [propName: string]: unknown
 }
@@ -630,6 +650,11 @@ export interface DecryptOptions extends CritOption {
    * and `Infinity` disables the limit. Other values must be positive safe integers.
    */
   maxDecompressedLength?: number
+
+  /**
+   * Sender's public key for ECDH-1PU or other key agreement/validation algorithms requiring the sender's key.
+   */
+  senderKey?: KeyInput
 }
 
 /** JWE Encryption options. */

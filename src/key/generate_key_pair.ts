@@ -38,6 +38,10 @@ export type GenerateKeyPairAlgorithm =
   | 'ECDH-ES+A128KW'
   | 'ECDH-ES+A192KW'
   | 'ECDH-ES+A256KW'
+  | 'ECDH-1PU'
+  | 'ECDH-1PU+A128KW'
+  | 'ECDH-1PU+A192KW'
+  | 'ECDH-1PU+A256KW'
   | (string & {})
 
 /** Generated asymmetric key pair. */

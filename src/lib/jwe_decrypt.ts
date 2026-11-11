@@ -30,6 +30,7 @@ export type DecryptShared = [
   crit: { [propName: string]: boolean } | undefined,
   maxPBES2Count: number | undefined,
   maxDecompressedLength: number | undefined,
+  senderKey: types.KeyInput | undefined
 ]
 
 /**
@@ -173,6 +174,7 @@ export function prepareDecrypt(options?: types.DecryptOptions): DecryptShared {
     options?.crit,
     options?.maxPBES2Count,
     options?.maxDecompressedLength,
+    options?.senderKey,
   ]
 }
 
@@ -205,6 +207,7 @@ export async function decryptJWE(
     crit,
     maxPBES2Count,
     maxDecompressedLength,
+    senderKeyInput,
   ] = shared
   const { encrypted_key: encodedKey } = jwe
 
@@ -284,6 +287,7 @@ export async function decryptJWE(
     key,
     'decrypt',
   )
+  const senderKey = senderKeyInput ? await prepareKey(algEntry, senderKeyInput, 'encrypt') : undefined
 
   let plaintext: Uint8Array
   if (algEntry.mode === 'integrated-encryption') {
@@ -307,6 +311,7 @@ export async function decryptJWE(
         encryptedKey,
         joseHeader,
         maxPBES2Count,
+        senderKey
       )
       if (
         isJWECEKTransport(algEntry) &&
